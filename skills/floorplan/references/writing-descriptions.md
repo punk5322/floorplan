@@ -142,6 +142,13 @@ The default audience is `"everyone"`. Write as if explaining the app to its owne
 | ✗ | name "Stripe webhook", "Receives and signature-checks Stripe webhook payloads." |
 | ✓ | name "Stripe alerts", "Stripe calls this when a payment, refund or dispute changes; it checks the message is genuine and queues it." |
 
+**MCP tools** (`TOOL /mcp/<name>`): what an AI assistant can do through the app. The scan already has the tool's own description; rewrite it for the owner, saying what changes or what comes back.
+
+| | |
+|---|---|
+| ✗ | name "create_items", "MCP tool that inserts task records." |
+| ✓ | name "Add tasks", "Lets an AI assistant add one or more tasks to the shared list, for either person." |
+
 For `"developers"`, the ✗ column is closer to right (minus the filler). Same rules otherwise: one sentence, verb first, specific.
 
 ## How to work

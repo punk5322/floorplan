@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0 (2026-10-30)
+
+- **Swift apps:** a map of an iPhone, Mac or Watch app now has its real structure. Each target and Swift package becomes a module, read from `Package.swift`, XcodeGen's `project.yml` or the Xcode project, and the AI uses them as the map's parts. Files are connected by the types and functions they use from each other, since Swift files in one module never import each other; names in comments and strings don't count, and a name used by nearly every file is left out so it doesn't drown the map. Apple frameworks that stand for something outside the app show up as outside parts: CloudKit as iCloud, HealthKit as Apple Health, EventKit as Calendar & Reminders. Doc comments describe files, and Xcode's "Created by" header is skipped.
+- **More endpoints:** Vapor and Hummingbird routes, and hand-written routers: a Cloudflare Worker comparing `url.pathname`, a Swift `NWListener` server switching on method and path, Python's http.server.
+- **MCP tools as endpoints:** each tool an MCP server offers shows as `TOOL /mcp/<name>` with its description, from the TypeScript SDK, Python's `@mcp.tool`, a Swift or JS tool registry, or a JSON tool list. They're what AI agents can do with your app, so they're on the map like any other endpoint.
+- **Endpoints button:** one list of every web address the app answers, every MCP tool (grouped by server) and every outside service the code calls. Picking one shows it on the map.
+- **Swift outside calls:** `URL(string: "https://…")` addresses, including ones with `\(…)` in them, count as calls to outside services.
+- **Fewer false Health alarms in Swift:** Keychain account and service names, and a choice between two such names, are no longer reported as passwords.
+- **Light mode everywhere:** the language bar in a part's details used fixed colours; it now follows the theme, and a test keeps every part of the map on theme colours.
+
 ## 0.2.2 (2026-10-28)
 
 - **Light mode:** a new **Theme** button in the top bar cycles **Auto → Light → Dark**. Auto follows your device's light or dark setting and changes with it. Your choice is remembered on this device, and the map shows the right colours from the first moment, with no flash. The button is a 44 px target, works from the keyboard with a visible focus ring, and the change is instant (nothing animates, so Reduce Motion is respected). Dark looks exactly as before. Requested in #9 and built by @menachem-kurkus in #10.

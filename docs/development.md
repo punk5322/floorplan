@@ -27,10 +27,10 @@ skills/floorplan/
     refresh.mjs    incremental update: re-scan, carry over, flag changes, rebuild
     recent.mjs     facts for marking recent work
     open.mjs       start or reuse the map's server, and open the browser
-    lib/           extraction, import resolution, route matching, Health, screens, which agent is running, helpers
+    lib/           extraction, import resolution, Swift modules and links, route matching, Health, screens, which agent is running, helpers
   assets/
     viewer.html    the map (template the build fills in)
-    ui/            viewer extensions: Theme button, glossary, Health, recent work, screens, tour, waitlist card
+    ui/            viewer extensions: Theme button, glossary, Health, recent work, screens, endpoints, tour, waitlist card
     graph-query.js shared map lookups (viewer, query.mjs, Ask instructions)
     serve.mjs      copied into each project's floorplan/ folder; answers through Claude Code or Codex
     query-cli.mjs  becomes floorplan/query.mjs
@@ -78,6 +78,8 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `secrets.test.mjs` | Health finds secrets, masks them, and ignores placeholders |
 | `health.test.mjs` | which endpoints Health calls open to anyone (FastAPI sample in `fixtures/`) |
 | `firebase.test.mjs` | Firebase Cloud Functions: callables and onRequest functions as endpoints, the website's calls to them, Screens, Health, background functions (React + Firebase sample in `fixtures/`) |
+| `swift.test.mjs` | Swift: modules from Package.swift, project.yml and Xcode projects, import and symbol links (none from comments or strings), the 40% rule, Apple frameworks as outside parts, doc comments, URL calls (SwiftPM + XcodeGen sample in `fixtures/swift-app`) |
+| `endpoints.test.mjs` | Vapor, a hand-written NWListener router, a Cloudflare Worker router, http.server, and MCP tools from the TypeScript SDK, a Swift registry and a JSON tool list (samples in `fixtures/`) |
 | `sample-app.test.mjs` | a whole map of a two-repo shop: endpoints, cross-repo requests, Health, offline map, no secret values written, updates |
 | `serve.test.mjs` | the map's server: 127.0.0.1 only, token and same-origin checks, nothing served from outside its folder |
 | `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |

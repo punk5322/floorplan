@@ -18,24 +18,37 @@ flowchart TD
 
 `scan.mjs` finds every git repository under the folder you point it at (one repo, a monorepo, or several repos side by side), skipping duplicate worktrees. It lists files with git, so your `.gitignore` is respected, then extracts from each file:
 
-- **imports**, resolved to real files: TypeScript path aliases, Python packages, Go modules, Rust crates, JVM packages;
+- **imports**, resolved to real files: TypeScript path aliases, Python packages, Go modules, Rust crates, JVM packages, Swift modules;
 - **exported definitions** and their doc comments;
 - **endpoints** the server defines;
 - **web requests** the code makes;
 - content **fingerprints**, so later updates can tell what changed.
 
-Supported languages: TypeScript and JavaScript (including Vue, Svelte and Astro files), Python, Go, Rust, Java, Kotlin, Scala and Groovy, with lighter support for others.
+Supported languages: TypeScript and JavaScript (including Vue, Svelte and Astro files), Python, Swift, Go, Rust, Java, Kotlin, Scala and Groovy, with lighter support for others.
+
+### Swift
+
+Swift files in one module never import each other, so imports alone would leave an app's files unconnected. Floorplan works in three steps:
+
+1. **Modules.** Each target becomes a module, read from `Package.swift` (targets, their folders and dependencies, products, remote packages), XcodeGen's `project.yml` (each target's `sources` and dependencies) or, when neither exists, the Xcode project (target names and their folders). Every Swift file belongs to the module whose folder holds it most specifically, and the scan summary lists the modules, which make good parts for the map.
+2. **Links by name.** Each file's top-level types, functions and constants (and public nested types) go into an index. A file links to another when it uses a name the other declares, outside comments and strings (multi-line `"""` and raw `#"…"#` strings included), in its own module or a module it imports. A name used by more than 40% of the Swift files (when there are at least 10) links nothing, so one everywhere-type doesn't drown the map; the summary says which names were left out.
+3. **Outside parts.** `import CloudKit` becomes iCloud, HealthKit Apple Health, EventKit Calendar & Reminders, and so on; plain platform frameworks (Foundation, SwiftUI, UIKit) are left out. Remote packages are outside libraries.
+
+A file's description starts from its header comment (Xcode's "Created by" template is skipped) or the `///` or `/** */` doc comment on its first type.
 
 ## 2. Connecting requests to endpoints
 
 The most useful lines on the map connect a screen's web requests to the server code that answers them, often across repos. Floorplan:
 
-- **Finds endpoints** in Express, Koa, Hono, Next.js (route files and API routes), Firebase Cloud Functions, Flask, FastAPI, Django, Go (net/http, Gin, Echo, chi, Fiber), Actix, Axum and Spring.
+- **Finds endpoints** in Express, Koa, Hono, Next.js (route files and API routes), Firebase Cloud Functions, Flask, FastAPI, Django, Go (net/http, Gin, Echo, chi, Fiber), Actix, Axum, Spring, Vapor and Hummingbird.
+- **Reads hand-written routers**: a Cloudflare Worker or other `fetch` handler comparing `url.pathname` (`path === "/x" && method === "POST"`, `path.startsWith("/signin")`, `switch (pathname)`), a Swift server switching on method and path (`case ("POST", "/mcp")`, `p.hasPrefix(…)`, `switch path`), and Python's http.server (`self.path == "/x"` inside `do_GET`). A "known paths" check above the router adds nothing of its own.
+- **Lists MCP tools as endpoints.** An MCP server's tools are what AI agents can do with the app, so each is an endpoint `TOOL /mcp/<name>` with its description: from the TypeScript SDK (`server.tool`, `registerTool`), Python's `@mcp.tool`, a tools array whose entries are made by one helper with a snake_case name first (`t("get_context", …)`), or a JSON tool list the server imports. Tools are never matched to web requests; they're reached through the server's `/mcp` address.
 - **Resolves prefixes**: Flask blueprints registered with a `url_prefix`, and Express routers mounted with `app.use('/api/users', usersRouter)`, including routers mounted inside other routers and mounts with middleware in front.
 - **Finds requests** made with `fetch`, axios, ky, `requests` and similar, including:
   - addresses built in a variable first: `const url = …; api.get(url)`;
   - template strings with nested parts;
-  - small helpers in the same file that add a prefix, like `call('/definitions')`.
+  - small helpers in the same file that add a prefix, like `call('/definitions')`;
+  - Swift's `URL(string: "https://…")`, with `\(…)` interpolations read like template parts.
 - **Firebase Cloud Functions** are called by name rather than by address. A callable function (`onCall`) shows up as `CALL /approveItem` under the name your functions entry file exports it as, and the website's `httpsCallable(functions, 'approveItem')` calls reach it, including through a helper of your own that wraps `httpsCallable`. An `onRequest` function is an ordinary endpoint at `/<name>`, and an Express app passed to it keeps its own routes under that name. Scheduled and other background functions (Firestore, Storage, Pub/Sub) are listed for the AI to place on the map.
 - **Matches** the two. When a request only spells out part of the address, because the base URL lives in settings, Floorplan learns each client's base path and prefers matches that fit it.
 
