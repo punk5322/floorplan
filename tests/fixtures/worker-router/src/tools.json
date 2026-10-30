@@ -1,0 +1,7 @@
+{
+  "version": "1.0.0",
+  "tools": [
+    { "name": "get_weather", "title": "Weather", "description": "Today's weather where you are. Call it before planning outside.", "inputSchema": { "type": "object" } },
+    { "name": "list_plans", "title": "Plans", "description": "Your plans for the week, soonest first.", "inputSchema": { "type": "object", "properties": {} } }
+  ]
+}

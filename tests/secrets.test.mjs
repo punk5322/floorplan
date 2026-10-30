@@ -36,3 +36,14 @@ test('placeholders, values read from the environment and public settings are not
   assert.deepEqual(secrets('DB_PASSWORD = os.environ["DB_PASSWORD"]\nAPI_KEY = os.getenv("API_KEY")\n'), []);
   assert.deepEqual(secrets('API_URL = "https://api.example.com/v1/orders"\n'), []);
 });
+
+test('Swift: Keychain item labels and a choice between two label strings are not secrets; a real key still is', () => {
+  const swift = (src) => secrets(src, 'App/AgentServer.swift', 'swift');
+  // Household's AgentServer.swift: the account name each person's password is stored under
+  assert.deepEqual(swift('let account = person == .arsh ? "agent-password" : "agent-password-milo"\n'), []);
+  assert.deepEqual(swift('Keychain.save(token, service: "shop-password-store", account: "refresh-token-1")\n'), []);
+  assert.deepEqual(swift('query[kSecAttrAccount as String] = "api_token_main"\n'), []);
+  const real = 'a8F3kQ2' + 'zL9xW4mR7tY1';
+  assert.equal(swift(`let clientSecret = "${real}"\n`).length, 1, 'a hard-coded secret in Swift is still found');
+  assert.equal(swift(`let k = "${FAKE_GITHUB_TOKEN}" // Keychain.save\n`).length, 1, 'a known key format is found even on a Keychain line');
+});

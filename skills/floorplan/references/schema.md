@@ -33,7 +33,7 @@ Each node is a chip on the board. Hierarchy comes from `parent`. A node with no 
 | `details` | string | optional longer notes; blank lines separate paragraphs |
 | `paths` | string[] | globs claiming files (see below) |
 | `exclude` | string[] | globs to carve files back out of `paths`. **Inherited by all descendants**, e.g. `"exclude": ["**/*.test.tsx"]` on a frontend node keeps co-located tests out of every child, so a separate Tests node can claim them |
-| `packages` | string[] | **external nodes:** package names this node stands for, e.g. `"stripe"`, `"npm:@stripe/*"`, `"pypi:sqlalchemy"`. Imports of them become edges to this node |
+| `packages` | string[] | **external nodes:** package names this node stands for, e.g. `"stripe"`, `"npm:@stripe/*"`, `"pypi:sqlalchemy"`, `"swiftpm:Collections"`, or an Apple framework group from a Swift import, `"apple:iCloud"`, `"apple:Apple Health"`. Imports of them become edges to this node |
 | `hosts` | string[] | **external nodes:** hostnames called from code, e.g. `"api.stripe.com"`, `"*.squareup.com"`. Calls become `http` edges |
 | `tags` | string[] | free-form, shown in the panel |
 
@@ -80,6 +80,7 @@ Good candidates:
 - publisher → queue → consumer (`queue` / `event`)
 - webhooks coming in from third parties (`http`, from the external node to the handler)
 - cron/scheduler → job (`call`)
+- an in-app server's MCP tools reached from a cloud copy of the same tools, or an app that registers with a server through an env-configured URL (`http`)
 - Firebase background functions (schedules, Firestore/Storage/Pub/Sub triggers, from the scan's FIREBASE FUNCTIONS list) → a `worker` node; link the collection or topic that triggers them (`event`)
 - calls through env-configured base URLs that the matcher missed (`http`)
 
@@ -123,7 +124,7 @@ Good candidates:
 | `tasks[].title` | 2–5 words, shown on hover and as the board title |
 | `tasks[].request` | what the user asked for, in their words (shortened). Shown as "You asked: …" |
 | `tasks[].summary` | 1–2 sentences: what was done toward it, and where it stands. Mention deletions here; deleted files aren't on the map |
-| `items[].ref` | a file path, a node id, or `"METHOD /path"` exactly as on the map. Refs that aren't on the map are left out with a warning |
+| `items[].ref` | a file path, a node id, or `"METHOD /path"` exactly as on the map (an MCP tool is `"TOOL /mcp/<name>"`). Refs that aren't on the map are left out with a warning |
 | `items[].change` | `"new"` or `"changed"` (default) |
 | `items[].note` | 1–2 plain sentences: what changed on this card, and how it serves the request |
 

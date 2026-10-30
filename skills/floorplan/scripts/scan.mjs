@@ -9,7 +9,8 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { discover, gitFiles, gitInfo, classify, toPosix, parseArgs, fmtNum, HARD_IGNORE_DIRS, MAP_DIR, LEGACY_MAP_DIR, isMapDir, mapDir, keepOutOfGit } from './lib/common.mjs';
-import { extract, callableCallsVia } from './lib/extract.mjs';
+import { extract, callableCallsVia, jsonTools } from './lib/extract.mjs';
+import { swiftLinks } from './lib/swift.mjs';
 import { findIssues } from './lib/health.mjs';
 import { findScreens } from './lib/screens.mjs';
 import { createResolver } from './lib/resolve.mjs';
@@ -117,13 +118,45 @@ for (const f of files) {
     } else if (res.unresolved) unresolved++;
   }
 }
+// Swift: files in one module never import each other, so they're linked by the names they use
+const swiftFiles = files.filter((f) => f.swift);
+const sw = swiftFiles.length ? swiftLinks(root, files, fileList.map((x) => x.path)) : null;
+if (sw) {
+  for (const e of sw.edges) edges.push({ from: e.from, to: e.to, names: e.names, line: 0, weight: e.count });
+  for (const e of sw.externals) {
+    const [eco, name] = [e.pkg.slice(0, e.pkg.indexOf(':')), e.pkg.slice(e.pkg.indexOf(':') + 1)];
+    if (!externals.has(e.pkg)) externals.set(e.pkg, { eco, name, count: 0, files: new Set() });
+    const x = externals.get(e.pkg);
+    x.count++;
+    x.files.add(e.from);
+    extEdges.push(e);
+  }
+  for (const f of swiftFiles) f.module = sw.fileModule.get(f.path);
+}
+
+// MCP tools listed in a JSON file belong to the code that imports it (the server, when one of the
+// importers answers /mcp)
+const jsonImporters = new Map();
+for (const f of files) for (const imp of f.imports || []) for (const t of imp.files || []) if (t.endsWith('.json')) {
+  if (!jsonImporters.has(t)) jsonImporters.set(t, []);
+  jsonImporters.get(t).push(f);
+}
+for (const [jf, importers] of jsonImporters) {
+  let tools = [];
+  try { tools = jsonTools(JSON.parse(fs.readFileSync(path.join(root, jf), 'utf8'))); } catch { continue; }
+  if (!tools.length) continue;
+  const server = importers.find((f) => (f.routes || []).some((r) => r.path === '/mcp')) || importers[0];
+  const have = new Set((server.routes || []).map((r) => r.path));
+  server.routes = [...(server.routes || []), ...tools.filter((t) => !have.has(t.path))];
+}
+
 // merge duplicate edges (same from/to)
 const edgeMap = new Map();
 for (const e of edges) {
   const k = e.from + '\u0000' + e.to;
   const prev = edgeMap.get(k);
-  if (prev) { prev.names = [...new Set([...prev.names, ...e.names])]; prev.count++; }
-  else edgeMap.set(k, { ...e, count: 1 });
+  if (prev) { prev.names = [...new Set([...prev.names, ...e.names])]; prev.count += e.weight || 1; }
+  else edgeMap.set(k, { ...e, count: e.weight || 1 });
 }
 
 // Firebase callable helpers used from other files: `import { callFunction } from '../lib/firebase'`,
@@ -160,6 +193,7 @@ const scan = {
     ...(f.issues ? { issues: f.issues } : {}),
     ...(f.screens ? { screens: f.screens } : {}),
     ...(f.triggers ? { triggers: f.triggers } : {}),
+    ...(f.module ? { module: f.module } : {}),
   })),
   edges: [...edgeMap.values()].map(({ from, to, names, count, dynamic }) => ({ from, to, ...(names.length ? { names } : {}), ...(count > 1 ? { count } : {}), ...(dynamic ? { dynamic } : {}) })),
   externals: [...externals.values()].map((e) => ({ id: `${e.eco}:${e.name}`, eco: e.eco, name: e.name, imports: e.count, files: e.files.size })),
@@ -167,6 +201,7 @@ const scan = {
   routes,
   http,
   hosts,
+  ...(sw ? { swift: { modules: sw.modules, remote: sw.remote, ubiquitous: sw.dropped } } : {}),
 };
 fs.mkdirSync(path.dirname(outFile), { recursive: true });
 fs.writeFileSync(outFile, JSON.stringify(scan));
@@ -276,6 +311,29 @@ if (fbRoutes.length || triggers.length) {
   }
   line();
 }
+
+// Swift: modules are the natural parts of an app (each target and package), so list them for the map
+if (sw) {
+  line(`SWIFT MODULES (${sw.modules.length})  from Package.swift, project.yml and Xcode projects. Good boundaries for the map's parts:`);
+  const count = new Map();
+  for (const m of sw.fileModule.values()) count.set(m, (count.get(m) || 0) + 1);
+  for (const m of sw.modules) line(`  ${m.name.padEnd(28)} ${m.kind.padEnd(8)} ${String(count.get(m.name) || 0).padStart(4)} files  ${(m.dirs.join(', ') || '-').padEnd(40)}${m.test ? '  (tests)' : ''}${m.deps.length ? `  uses ${m.deps.join(', ')}` : ''}`);
+  if (sw.remote.length) line(`  remote packages: ${sw.remote.join(', ')}`);
+  line(`SWIFT LINKS  ${sw.counts.edges} file->file (imports of local modules + names one file uses from another)${sw.dropped.length ? `; not linked, used by over 40% of Swift files: ${sw.dropped.slice(0, 8).join(', ')}${sw.dropped.length > 8 ? '…' : ''}` : ''}`);
+  line();
+}
+
+// endpoints by kind: web routes, MCP tools (grouped by the file that registers them), outside calls
+const tools = routes.filter((r) => r.method === 'TOOL');
+if (tools.length) {
+  const byFile = new Map();
+  for (const t of tools) byFile.set(t.file, (byFile.get(t.file) || 0) + 1);
+  line(`MCP TOOLS  ${tools.length}, each an endpoint "TOOL /mcp/<name>" (an AI agent's API; describe them like endpoints)`);
+  for (const [f, n] of [...byFile].sort((a, b) => b[1] - a[1])) line(`  ${String(n).padStart(5)}  ${f}`);
+  line();
+}
+line(`ENDPOINTS  ${routes.length - tools.length} web routes · ${tools.length} MCP tools · ${new Set(hosts.map((h) => h.host)).size} outside addresses called`);
+line();
 
 const topExt = scan.externals.sort((a, b) => b.files - a.files).slice(0, 25);
 line(`EXTERNAL PACKAGES (top ${topExt.length} by importing files)`);
