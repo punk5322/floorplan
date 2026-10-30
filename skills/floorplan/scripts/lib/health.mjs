@@ -77,6 +77,9 @@ const SECRET_NAME = /(?:^|[_.-])(api_?key|apikey|secret(?:_?key)?|client_?secret
 const PUBLIC_NAME = /(^|_)(public|publishable|anon|site_?key|example|sample|test|dummy|fake|mock|placeholder|default|field|label|header|name|type|url|uri|endpoint|path|file|env|var|prefix|length|len|min|max|regex|pattern|format|expires?|ttl)(_|$)|^(next_public|vite|react_app|expo_public|nuxt_public|gatsby)_/i;
 const ENV_LOOKUP = /os\.environ|os\.getenv|getenv\(|process\.env|import\.meta\.env|ENV\[|ENV\.fetch|System\.getenv|Deno\.env|secrets\.|config\(\s*['"]|env\(\s*['"]|\$\{\{/;
 const PASSWORD_NAME = /pass|pwd/i;
+// Swift Keychain calls name the item they store (its service and account labels); the secret itself
+// comes from somewhere else, so a line that names a Keychain item holds no secret value
+const KEYCHAIN_LABEL = /\b(account|service|kSecAttr(?:Account|Service|Label|Generic))\s*[:=]|\bKeychain\w*\.|\bSecItem(?:Add|CopyMatching|Update|Delete)\b/;
 const CONFIG_LANGS = new Set(['yaml', 'yml', 'ini', 'cfg', 'conf', 'properties', 'env', 'toml']);
 
 const snake = (s) => s.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
@@ -154,7 +157,9 @@ function findSecrets(src, f, out) {
   const unquoted = /^\s*(?:export\s+)?([A-Za-z_][\w.-]*)\s*[:=]\s*([^\s#'"]{6,200})\s*(?:#.*)?$/;
   lines.forEach((text, i) => {
     if (text.length > 400 || ENV_LOOKUP.test(text) || inDoc.has(i + 1) || /^\s*(#|\/\/|\*|\/\*|<!--)/.test(text)) return;
-    const pairs = [...text.matchAll(quoted)].map((m) => [m[2], m[4]]);
+    if (f.lang === 'swift' && KEYCHAIN_LABEL.test(text)) return;
+    // `cond ? "agent-password" : "agent-password-milo"` is a choice between two strings, not name: value
+    const pairs = [...text.matchAll(quoted)].filter((m) => !(m[1] && /\?\s*$/.test(text.slice(0, m.index)))).map((m) => [m[2], m[4]]);
     if (!pairs.length && (f.category === 'config' && CONFIG_LANGS.has(f.lang))) { const u = unquoted.exec(text); if (u) pairs.push([u[1], u[2]]); }
     for (const [name, value] of pairs) {
       const n = snake(name.split('.').pop());
@@ -241,7 +246,7 @@ function pyRoutes(src, f, out) {
   }
 
   for (const r of f.routes || []) {
-    if (r.framework === 'django') continue;
+    if (r.framework === 'django' || r.framework === 'handwritten' || r.framework === 'mcp') continue;
     const i0 = r.line - 1;
     // decorators above the route decorator (wrong place in Flask/FastAPI: the route registers the unwrapped function)
     const above = [];
@@ -299,6 +304,9 @@ function jsRoutes(src, f, out) {
   for (const u of uses) if (u.v === 'app' || u.v === 'server') out.push({ k: 'global-guard', framework: 'express', name: u.name, line: u.line });
 
   routes.forEach((r, idx) => {
+    // hand-written routers check the caller in the function they hand off to, and MCP tools behind
+    // their server's /mcp route: not something a look at the route line can judge, so say nothing
+    if (r.framework === 'handwritten' || r.framework === 'mcp') return;
     const rec = { k: 'route', line: r.line, method: r.method };
     if (r.framework === 'firebase') {
       // a callable checks request.auth (v1: context.auth) or turns on App Check; an onRequest function

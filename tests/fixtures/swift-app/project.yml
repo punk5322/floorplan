@@ -1,0 +1,23 @@
+name: Shop
+options:
+  bundleIdPrefix: com.example
+packages:
+  Kit:
+    path: Packages/Kit
+targets:
+  Shop:
+    type: application
+    platform: iOS
+    sources: [App]
+    dependencies:
+      - package: Kit
+        product: KitUI
+      - target: ShopWatch
+  ShopWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: Watch
+        excludes: ["*.plist"]
+    dependencies:
+      - package: Kit

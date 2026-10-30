@@ -190,6 +190,15 @@ for (const h of scan.hosts) {
   const m = hostMatchers.find((hm) => hm.globs.some((g) => g.test(h.host)));
   if (m) { m.hits++; addLink(`f:${h.from}`, `n:${m.id}`, 'http', { label: h.host, inferred: true }); }
 }
+// outbound calls, by host: who calls each outside address, and the part that stands for it (if any)
+const outboundMap = new Map();
+for (const h of scan.hosts) {
+  if (!includedSet.has(h.from)) continue;
+  if (!outboundMap.has(h.host)) outboundMap.set(h.host, { host: h.host, files: [], node: hostMatchers.find((hm) => hm.globs.some((g) => g.test(h.host)))?.id || null });
+  const o = outboundMap.get(h.host);
+  if (!o.files.includes(h.from)) o.files.push(h.from);
+}
+const outbound = [...outboundMap.values()].sort((a, b) => b.files.length - a.files.length || a.host.localeCompare(b.host));
 for (const pm of pkgMatchers) if (!pm.hits) warn(`node "${pm.id}" packages match nothing imported. Known: ${extIds.slice(0, 8).join(', ')}…`);
 for (const hm of hostMatchers) if (!hm.hits) warn(`node "${hm.id}" hosts match no host called from code`);
 
@@ -399,6 +408,7 @@ const graph = {
     return { f: r.file, m: r.method, p: r.path, l: r.line, h: r.handler || null, name: d?.name || fallbackRouteName(r), d: d?.d || r.doc || '', ...(d?.d ? {} : { auto: true }), ...(d?.review ? { review: d.review } : {}), ...(r.doc ? { doc: r.doc } : {}) };
   }),
   links: [...links.values()],
+  ...(outbound.length ? { outbound } : {}),
   flows: outFlows,
   tour: outTour,
   ...(outRecent?.items.length ? { recent: outRecent } : {}),

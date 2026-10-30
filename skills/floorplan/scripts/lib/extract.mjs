@@ -1,5 +1,6 @@
 // Per-language, regex-based extraction of imports, exported symbols, HTTP routes and HTTP calls.
 // Deliberately approximate: good enough to draw the map, cheap enough to run on any repo.
+import { swiftStrip, swiftFacts, closeOf, IMPORT_RE } from './swift.mjs';
 
 const lineIndex = (src) => {
   const starts = [0];
@@ -29,14 +30,15 @@ const IGNORED_HOST = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$|\.(test|examp
 const FILE_EXT_TAIL = /\.(png|jpe?g|gif|svg|ico|webp|css|js|mjs|ts|tsx|json|html?|txt|md|pdf|csv|xml|woff2?|ttf|map)$/i;
 
 function normalizeCallLiteral(raw) {
-  let s = raw.trim();
+  // Swift interpolation reads like a template's: "\(base)/items/\(id)" → ${x}/items/${x}
+  let s = raw.trim().replace(/\\\([^)]*\)/g, '${x}');
   let host = null;
   // a Firebase function's own address (https://us-central1-<project>.cloudfunctions.net/signDocument) is
   // this app's backend, not an outside service
   const fn = /^https?:\/\/[^/\s]*\.cloudfunctions\.net(\/.*)$/i.exec(s);
   if (fn) s = fn[1];
   const abs = /^https?:\/\/([^/${}\s]+)(.*)$/i.exec(s);
-  if (abs) { host = abs[1].toLowerCase(); s = abs[2] || '/'; }
+  if (abs) { host = abs[1].toLowerCase().replace(/:$/, ''); s = abs[2] || '/'; } // "127.0.0.1:\(port)": the port is interpolated
   // leading interpolations: ${API_BASE}/x, {BASE_URL}/x
   s = s.replace(/^(?:\$\{[^}]*\}|\{[^}]*\})+/, '');
   if (!s.startsWith('/')) return null;
@@ -203,9 +205,12 @@ function extractJs(src, filePath) {
   }
 
   const triggers = /firebase-functions/.test(code) ? firebaseFunctions(code, at, routes, mounts) : [];
+  const hand = /\bpathname\b/.test(code) ? jsHandRoutes(code, at) : null;
+  if (hand) routes.push(...hand.routes);
+  routes.push(...mcpTools(code, blankStrings(code), at, 'js'));
 
   const serverLine = /\b\w+\.(use|route)\(\s*["'`]\/|\b(?:app|server|fastify|hono|routes?|router|[a-z]+Router)\.(?:get|post|put|patch|delete|all|options|head)\(\s*["'`]\//;
-  const { calls, hosts } = extractCalls(code, at, { skip: serverLine });
+  const { calls, hosts } = extractCalls(code, at, { skip: hand ? new RegExp(`${serverLine.source}|${hand.skip.source}`) : serverLine });
   const seenCall = new Set(calls.map((c) => `${c.line}|${c.path}`));
   for (const c of wrapperCalls(code, at)) if (!seenCall.has(`${c.line}|${c.path}`)) calls.push(c);
   const callables = /\bhttpsCallable\b/.test(code) ? callableCalls(code, at) : { calls: [], wrappers: [] };
@@ -331,6 +336,152 @@ function spliced(rawBody, param) {
   return raw ? raw[2] : null;
 }
 
+// ---------- hand-written routers and MCP tools (any language) ----------
+
+const HTTP_VERB = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/;
+/**
+ * Blank the contents of '…', "…" and `…` strings in C-style code (comments already stripped), so
+ * brackets inside strings don't confuse bracket matching. Offsets don't move.
+ */
+function blankStrings(code) {
+  return code.replace(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g, (m, q, body) => q + body.replace(/[^\n]/g, ' ') + q);
+}
+/** A route found by reading a hand-written router; `ANY` when no method is visible. */
+const handRoute = (method, p, line) => ({ method, path: p, var: null, line, framework: 'handwritten' });
+/**
+ * Clean up a hand-written router's routes: one per method and path, and an `ANY /x` dropped when a
+ * specific method is known for /x or a longer path starts with it (a "known paths" check above the router).
+ */
+function tidyHand(routes) {
+  const seen = new Set();
+  const out = routes.filter((r) => { const k = `${r.method} ${r.path}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  return out.filter((r) => r.method !== 'ANY' || !out.some((o) => o !== r && (o.path === r.path ? o.method !== 'ANY' : r.path.length > 1 && o.path.startsWith(r.path))));
+}
+
+/**
+ * MCP tools: an MCP server's tools are its real API, so each becomes an endpoint `TOOL /mcp/<name>`.
+ * Recognised: the TypeScript SDK (`server.tool("name", "description", …)`, `registerTool("name",
+ * { description })`), Python (`@mcp.tool()` above a def), and registries: an array named like tools
+ * (`tools = [`, `let all: [AgentTool] = [`) whose entries are calls with a snake_case name first
+ * (`t("get_context", "area", "Title", "description", …)`), or objects with name, description and inputSchema.
+ * `text` has comments stripped and strings kept; `code` is the same with string contents blanked.
+ */
+export function mcpTools(text, code, at, lang) {
+  const tools = [];
+  const add = (name, desc, idx) => { if (!tools.some((t) => t.handler === name)) tools.push({ method: 'TOOL', path: '/mcp/' + name, var: null, line: at(idx), framework: 'mcp', handler: name, ...(desc ? { doc: cleanDoc(desc) || desc.slice(0, 220) } : {}) }); };
+  if (lang === 'python') {
+    for (const m of text.matchAll(/^[ \t]*@(\w+)\.tool\(([^)]*)\)\s*\n(?:[ \t]*@.*\n)*[ \t]*(?:async[ \t]+)?def[ \t]+(\w+)/gm)) {
+      const named = /\bname\s*=\s*["']([\w.-]+)["']/.exec(m[2])?.[1];
+      tools.push({ method: 'TOOL', path: '/mcp/' + (named || m[3]), var: null, line: at(m.index), framework: 'mcp', handler: m[3] });
+    }
+    return tools;
+  }
+  // SDK style: server.tool("name", "description", …) / server.registerTool("name", { description: "…" }, …)
+  for (const m of text.matchAll(/\b(\w+)\.(tool|registerTool)\(\s*(["'`])([\w.-]+)\3\s*,\s*(?:(["'`])((?:\\.|(?!\5)[^\\])*?)\5|\{)?/g)) {
+    if (m[2] === 'tool' && !/server|mcp/i.test(m[1])) continue;
+    let desc = m[6];
+    if (!desc && m[0].endsWith('{')) desc = /\bdescription\s*:\s*(["'`])((?:\\.|(?!\1)[^\\])*?)\1/.exec(text.slice(m.index, m.index + 1500))?.[2];
+    add(m[4], desc, m.index);
+  }
+  // registries: an array named like tools (or of a *Tool type)
+  for (const m of code.matchAll(/\b(?:let|var|const)\s+(\w+)\s*(?::\s*([^=\n]+?))?\s*=\s*\[/g)) {
+    if (!/tool/i.test(m[1]) && !/tool/i.test(m[2] || '')) continue;
+    const open = m.index + m[0].length - 1;
+    const close = closeOf(code, open);
+    // the array's own elements: positions right after `[` or a comma at the array's top level
+    const starts = [];
+    let depth = 0;
+    for (let i = open + 1; i < close; i++) {
+      const c = code[i];
+      if ('([{'.includes(c)) depth++;
+      else if (')]}'.includes(c)) depth--;
+      else if (c === ',' && depth === 0) starts.push(i + 1);
+    }
+    starts.unshift(open + 1);
+    const entries = [];
+    for (let s of starts) {
+      while (/\s/.test(code[s] || '')) s++;
+      const call = /^(\w+)\s*\(/.exec(code.slice(s, s + 80));
+      if (call) {
+        const po = s + call[0].length - 1, pc = closeOf(code, po);
+        const args = [];
+        let d = 0, a0 = po + 1;
+        for (let i = po + 1; i <= pc; i++) {
+          const c = code[i];
+          if (i === pc || (c === ',' && d === 0)) { args.push(text.slice(a0, i).trim()); a0 = i + 1; continue; }
+          if ('([{'.includes(c)) d++; else if (')]}'.includes(c)) d--;
+        }
+        const lit = (a) => /^(["'`])((?:\\.|(?!\1)[^\\])*)\1$/s.exec(a)?.[2];
+        const name = lit(args[0] || '');
+        if (name && /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(name)) {
+          const desc = args.slice(1).map(lit).filter(Boolean).sort((x, y) => y.length - x.length)[0];
+          entries.push({ fn: call[1], name, desc, idx: s });
+        }
+        continue;
+      }
+      if (code[s] === '{') {
+        const obj = text.slice(s, closeOf(code, s) + 1);
+        const name = /\bname["']?\s*:\s*(["'`])([\w.-]+)\1/.exec(obj)?.[2];
+        if (name && /\b(inputSchema|input_schema)\b/.test(obj)) entries.push({ fn: '{}', name, desc: /\bdescription["']?\s*:\s*(["'`])((?:\\.|(?!\1)[^\\])*?)\1/.exec(obj)?.[2], idx: s });
+      }
+    }
+    // one helper making every entry, at least twice: a registry, not a list that happens to start with a word
+    const byFn = new Map();
+    for (const e of entries) byFn.set(e.fn, (byFn.get(e.fn) || 0) + 1);
+    const [fn, n] = [...byFn].sort((a, b) => b[1] - a[1])[0] || [];
+    if (n >= 2) for (const e of entries) if (e.fn === fn) add(e.name, e.desc, e.idx);
+  }
+  return tools;
+}
+
+/** Tools listed in a JSON file (`{ "tools": [{ name, description, inputSchema }] }` or a bare array), or []. */
+export function jsonTools(json) {
+  const list = Array.isArray(json) ? json : Array.isArray(json?.tools) ? json.tools : [];
+  return list.filter((t) => t && typeof t.name === 'string' && (t.inputSchema || t.input_schema || t.parameters))
+    .map((t) => ({ method: 'TOOL', path: '/mcp/' + t.name, var: null, line: 1, framework: 'mcp', handler: t.name, ...(typeof t.description === 'string' && t.description ? { doc: cleanDoc(t.description) || t.description.slice(0, 220) } : {}) }));
+}
+
+/**
+ * Hand-written JS/TS routers, e.g. a Cloudflare Worker's `export default { fetch }`:
+ * `url.pathname === "/x"`, `path === "/x" && method === "POST"`, `path.startsWith("/signin")` and
+ * `switch (pathname) { case "/x": … }`, where `path` was read from a `.pathname`.
+ */
+function jsHandRoutes(code, at) {
+  const vars = new Set(['pathname']);
+  for (const m of code.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*=\s*(?:[\w$]+\.)*pathname\b/g)) vars.add(m[1]);
+  const pv = `(?<![\\w$])(?:(?:[\\w$]+\\.)*pathname|(?<!\\.)(?:${[...vars].join('|')}))(?![\\w$])`;
+  const cmp = new RegExp(`${pv}\\s*(?:===?\\s*|\\.startsWith\\(\\s*)(["'\`])(\\/[^"'\`]*)\\1`, 'g');
+  const routes = [];
+  let off = 0;
+  for (const line of code.split('\n')) {
+    const paths = [...line.matchAll(cmp)].map((m) => m[2]);
+    if (paths.length) {
+      const methods = [...line.matchAll(/\bmethod\s*===?\s*["'`]([A-Z]+)["'`]/g)].map((m) => m[1]).filter((x) => HTTP_VERB.test(x));
+      for (const p of paths) for (const meth of methods.length ? methods : ['ANY']) routes.push(handRoute(meth, p, at(off)));
+    }
+    off += line.length + 1;
+  }
+  const blanked = blankStrings(code);
+  for (const m of blanked.matchAll(new RegExp(`\\bswitch\\s*\\(\\s*${pv}\\s*\\)\\s*\\{`, 'g'))) {
+    const open = m.index + m[0].length - 1;
+    const body = code.slice(open, closeOf(blanked, open));
+    for (const c of body.matchAll(/\bcase\s+(["'`])(\/[^"'`]*)\1\s*:/g)) routes.push(handRoute('ANY', c[2], at(open + c.index)));
+  }
+  return { routes: tidyHand(routes), skip: new RegExp(`${pv}\\s*(?:===?|\\.startsWith\\()`) };
+}
+
+/** Python's http.server: `if self.path == "/x"` inside `def do_GET(self)`. */
+function pyHandRoutes(code, at) {
+  const routes = [];
+  const handlers = [...code.matchAll(/^[ \t]*def[ \t]+do_([A-Z]+)\s*\(\s*self/gm)].map((m) => ({ method: m[1], index: m.index }));
+  if (!handlers.length) return [];
+  for (const m of code.matchAll(/\b(?:self\.path|\w*path)\s*(?:==\s*|\.startswith\(\s*)[rb]?(["'])(\/[^"']*)\1/g)) {
+    const h = handlers.filter((x) => x.index < m.index).pop();
+    if (h) routes.push(handRoute(HTTP_VERB.test(h.method) ? h.method : 'ANY', m[2], at(m.index)));
+  }
+  return tidyHand(routes);
+}
+
 // ---------- Python ----------
 
 function extractPy(src) {
@@ -375,6 +526,7 @@ function extractPy(src) {
   }
   // Django urls.py
   for (const m of all(/\b(?:re_)?path\(\s*r?["']([^"']*)["']\s*,\s*(?!include)/g, code)) routes.push({ method: 'ANY', path: '/' + m[1].replace(/^\^|\$$/g, ''), var: null, line: at(m.index), framework: 'django' });
+  routes.push(...pyHandRoutes(code, at), ...mcpTools(code, code, at, 'python'));
 
   const mounts = [];
   for (const m of all(/\b(?:register_blueprint|include_router|mount)\(\s*([A-Za-z_][\w.]*)([^)]*)\)/g, code)) {
@@ -445,6 +597,86 @@ function extractJvm(src) {
   return { imports, symbols, routes, mounts: [], calls, hosts, pkg };
 }
 
+// ---------- Swift ----------
+
+/**
+ * Swift: imports, declarations (kept on the file for lib/swift.mjs, which links files by the names
+ * they use), Vapor and Hummingbird routes, hand-written routers, MCP tool registries and HTTP calls.
+ */
+function extractSwift(src) {
+  const { noComments: text, code } = swiftStrip(src);
+  const at = lineIndex(text);
+  const imports = [...text.matchAll(IMPORT_RE)].map((m) => ({ spec: m[1], names: [], line: at(m.index) }));
+  const facts = swiftFacts(code);
+  const symbols = facts.decls.map((d) => ({ name: d.name, kind: d.kind, line: at(d.index) }));
+
+  const routes = [];
+  // Vapor (`app.get("todos", ":id")`, `routes.grouped("api")`, RouteCollection) and Hummingbird
+  // (`router.get("/todos/:id")`, `router.group("api")`): known router values and the prefix each adds
+  if (imports.some((i) => /^(Vapor|Hummingbird\w*)$/.test(i.spec))) {
+    const prefix = new Map([['app', ''], ['routes', ''], ['router', '']]);
+    for (const m of code.matchAll(/(\w+)(?:\s+(\w+))?\s*:\s*(?:some\s+|any\s+)?(?:RoutesBuilder|Application|Router(?:Group)?|RouterMethods)\b/g)) prefix.set(m[2] || m[1], '');
+    for (const m of code.matchAll(/\b(\w+)\s*=\s*Router(?:<[^>\n]*>)?\s*\(/g)) prefix.set(m[1], '');
+    const segs = (args) => args.split(',').filter((a) => !/^\s*\w+\s*:/.test(a)).flatMap((a) => [...a.matchAll(/"([^"]*)"/g)].map((x) => x[1])).map((x) => x.replace(/^\/+|\/+$/g, '')).filter(Boolean);
+    const join = (...parts) => '/' + parts.filter(Boolean).join('/');
+    // in source order, so a group is known before the routes on it
+    const events = [
+      ...[...code.matchAll(/\b(?:let|var)\s+(\w+)\s*=\s*(\w+)\.(?:grouped|group)\s*\(/g)].map((m) => ({ i: m.index, kind: 'assign', to: m[1], from: m[2], open: m.index + m[0].length - 1 })),
+      ...[...code.matchAll(/\b(\w+)\.(?:group|grouped)\s*\(/g)].map((m) => ({ i: m.index, kind: 'block', from: m[1], open: m.index + m[0].length - 1 })),
+      // `app.get("x") { … }`, or no arguments at all: `app.get { req in … }`
+      ...[...code.matchAll(/\b(\w+)\.(get|post|put|patch|delete|head|on)\s*([({])/g)].map((m) => ({ i: m.index, kind: 'route', from: m[1], verb: m[2], open: m[3] === '(' ? m.index + m[0].length - 1 : -1 })),
+    ].sort((a, b) => a.i - b.i);
+    for (const e of events) {
+      if (!prefix.has(e.from)) continue;
+      const args = e.open < 0 ? '' : text.slice(e.open + 1, closeOf(code, e.open));
+      const base = prefix.get(e.from);
+      if (e.kind === 'assign') { prefix.set(e.to, join(base.slice(1), ...segs(args))); continue; }
+      if (e.kind === 'block') {
+        const after = code.slice(closeOf(code, e.open) + 1, closeOf(code, e.open) + 80);
+        const v = /^\s*\{\s*(\w+)\s+in\b/.exec(after)?.[1];
+        if (v) prefix.set(v, join(base.slice(1), ...segs(args)));
+        continue;
+      }
+      const method = e.verb === 'on' ? (/^\s*\.(\w+)/.exec(args)?.[1] || 'ANY').toUpperCase() : e.verb.toUpperCase();
+      const handler = /\buse\s*:\s*(?:self\.)?(\w+)/.exec(args)?.[1];
+      routes.push({ method: HTTP_VERB.test(method) ? method : 'ANY', path: join(base.slice(1), ...segs(args)), var: e.from, line: at(e.i), framework: 'swift', ...(handler ? { handler } : {}) });
+    }
+  }
+  // hand-written servers (NWListener and friends): `case ("POST", "/mcp")`, `case ("GET", let p) where
+  // p.hasPrefix("/x")`, `switch path { case "/x": }` and `path == "/x"`
+  if (/\b(NWListener|NWConnection|HTTPServer|HTTPRequest|ChannelInboundHandler|GCDWebServer)\b|\.method\b/.test(code)) {
+    const hand = [];
+    let off = 0;
+    for (const line of text.split('\n')) {
+      if (/^\s*case\b/.test(line)) {
+        for (const m of line.matchAll(/\(\s*(?:"([A-Z]+)"|_|\.(\w+)|let\s+(\w+))\s*,\s*(?:"(\/[^"]*)"|let\s+(\w+))\s*\)/g)) {
+          const method = m[1] || (m[2] ? m[2].toUpperCase() : 'ANY');
+          const meth = HTTP_VERB.test(method) ? method : 'ANY';
+          if (m[4]) hand.push(handRoute(meth, m[4], at(off)));
+          else for (const p of line.matchAll(new RegExp(`\\b${m[5]}\\.hasPrefix\\(\\s*"(\\/[^"]*)"`, 'g'))) hand.push(handRoute(meth, p[1], at(off)));
+        }
+      }
+      for (const m of line.matchAll(/\b(?:\w+\.)?path\s*(?:==\s*|\.hasPrefix\(\s*)"(\/[^"]*)"/g)) {
+        const meth = [...line.matchAll(/\bmethod\s*==\s*"([A-Z]+)"/g)].map((x) => x[1]).filter((x) => HTTP_VERB.test(x));
+        for (const mm of meth.length ? meth : ['ANY']) hand.push(handRoute(mm, m[1], at(off)));
+      }
+      off += line.length + 1;
+    }
+    for (const m of code.matchAll(/\bswitch\s+([^{\n]+)\{/g)) {
+      if (!/\b(path|url|route|uri|endpoint)\b/i.test(m[1]) || /^\s*\(/.test(m[1])) continue;
+      const open = m.index + m[0].length - 1;
+      const body = text.slice(open, closeOf(code, open));
+      for (const c of body.matchAll(/^\s*case\s+([^:\n]*"\/[^\n]*?):/gm)) for (const p of c[1].matchAll(/"(\/[^"]*)"/g)) hand.push(handRoute('ANY', p[1], at(open + c.index + c[0].indexOf(p[0]))));
+    }
+    routes.push(...tidyHand(hand));
+  }
+  routes.push(...mcpTools(text, code, at, 'swift'));
+
+  const routeLine = /^\s*case\b[^\n]*"\/|\bpath\s*(?:==|\.hasPrefix)|\.(get|post|put|patch|delete|on|group|grouped)\s*\(\s*"/;
+  const { calls, hosts } = extractCalls(text, at, { skip: routeLine });
+  return { imports, symbols, routes, mounts: [], calls, hosts, swift: facts };
+}
+
 // ---------- small ones ----------
 
 function extractSimple(src, lang) {
@@ -458,7 +690,7 @@ function extractSimple(src, lang) {
   const symbols = [];
   if (lang === 'ruby') for (const m of all(/^\s*(class|module)\s+([A-Z][\w:]*)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
   if (lang === 'csharp') for (const m of all(/^\s*public\s+(?:static\s+|abstract\s+|sealed\s+|partial\s+)*(class|interface|enum|record|struct)\s+(\w+)/gm, code)) symbols.push({ name: m[2], kind: m[1], line: at(m.index) });
-  const { calls, hosts } = ['ruby', 'php', 'csharp', 'swift', 'dart', 'kotlin'].includes(lang) ? extractCalls(code, at) : { calls: [], hosts: [] };
+  const { calls, hosts } = ['ruby', 'php', 'csharp', 'dart', 'kotlin'].includes(lang) ? extractCalls(code, at) : { calls: [], hosts: [] };
   return { imports, symbols, routes: [], mounts: [], calls, hosts };
 }
 
@@ -469,6 +701,7 @@ function extractByLang(src, lang, filePath) {
     case 'go': return extractGo(src);
     case 'rust': return extractRust(src);
     case 'java': case 'kotlin': case 'scala': case 'groovy': return extractJvm(src);
+    case 'swift': return extractSwift(src);
     default: return extractSimple(src, lang);
   }
 }
@@ -562,19 +795,40 @@ function headerComment(lines) {
   return cleanDoc(buf.join('\n'));
 }
 
+/**
+ * A Swift file's header comment, minus Xcode's template lines (file name, project name, "Created by",
+ * copyright), so `//  Store.swift  //  Household  //  Created by…` gives nothing rather than noise.
+ */
+function swiftHeader(lines) {
+  let i = 0;
+  while (i < lines.length && !lines[i].trim()) i++;
+  if (/^\s*\/\*/.test(lines[i] || '')) return headerComment(lines);
+  const buf = [];
+  for (; i < lines.length && /^\s*\/\//.test(lines[i]); i++) buf.push(lines[i]);
+  const kept = buf.filter((l) => !/^\s*\/\/+\s*([\w+.-]+\.swift|Created by\b.*|Copyright\b.*|©.*|All rights reserved\.?|swift-tools-version:.*)?\s*$/i.test(l));
+  // what's left of a template is the project or target name alone on a line
+  if (kept.length === 1 && buf.length > kept.length && /^\s*\/\/+\s*[\w -]{1,40}$/.test(kept[0]) && !/[.!?]/.test(kept[0])) return null;
+  return cleanDoc(kept.join('\n'));
+}
+
 function addDocs(src, lang, r) {
   const lines = src.split('\n');
-  r.doc = lang === 'python' ? pyDocAfter(lines, -1) : HASH_LANGS.has(lang) ? hashHeader(lines) : headerComment(lines);
+  r.doc = lang === 'python' ? pyDocAfter(lines, -1) : lang === 'swift' ? swiftHeader(lines) : HASH_LANGS.has(lang) ? hashHeader(lines) : headerComment(lines);
   for (const s of r.symbols || []) {
     const d = lang === 'python' ? pyDocAfter(lines, s.line - 1) : commentBefore(lines, s.line - 1);
     if (d) s.doc = d;
   }
+  // a Swift file without a header says what it is in the doc comment on its first declaration
+  if (lang === 'swift' && !r.doc) r.doc = [...(r.symbols || [])].sort((a, b) => a.line - b.line).find((s) => s.doc)?.doc || null;
   // A route's handler is the first declaration after it (decorator-style frameworks).
   // (a Firebase function's export isn't the handler of the Express routes above it)
   const fbNames = new Set((r.routes || []).filter((rt) => rt.framework === 'firebase').map((rt) => rt.handler));
   const syms = (r.symbols || []).filter((s) => !fbNames.has(s.name)).sort((a, b) => a.line - b.line);
   for (const rt of r.routes || []) {
     if (rt.framework === 'next') { rt.handler = rt.method; continue; }
+    // an MCP tool decorating a function (Python's @mcp.tool) is described by that function's docstring
+    if (rt.framework === 'mcp') { if (!rt.doc) { const d = (r.symbols || []).find((x) => x.name === rt.handler)?.doc; if (d) rt.doc = d; } continue; }
+    if (rt.framework === 'handwritten') continue; // no handler declaration follows these
     if (rt.framework === 'firebase') { const d = r.symbols.find((s) => s.name === rt.handler)?.doc || commentBefore(lines, rt.line - 1); if (d) rt.doc = d; continue; }
     const h = syms.find((s) => s.line >= rt.line && s.line - rt.line <= 12);
     if (h) { rt.handler = h.name; if (h.doc) rt.doc = h.doc; }

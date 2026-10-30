@@ -4,7 +4,7 @@
 export const routeSegments = (p) => p.split('/').filter(Boolean).map((s) =>
   /^(<[^>]*>|\{[^}]*\}|:\w+|\[\.{0,3}[^\]]*\]|\*{1,2}|\$\{[^}]*\})$/.test(s) || /\$\{|\{[^}]*\}/.test(s) ? '*' : s);
 
-const TEST_FILE = /(^|\/)(tests?|__tests__|spec|specs|e2e|fixtures?)\/|\.(test|spec)\.[a-z]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|(^|\/)conftest\.py$/;
+const TEST_FILE = /(^|\/)(tests?|__tests__|spec|specs|e2e|fixtures?)\/|\.(test|spec)\.[a-z]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|(^|\/)conftest\.py$|(^|\/)Tests\/|Tests?\.swift$/;
 
 const joinPath =(...parts) => '/' + parts.map((p) => (p || '').replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/');
 
@@ -92,6 +92,8 @@ export function resolveRoutes(files) {
         for (const name of exportedAs.get(`${f.path}|${r.handler}`) || [r.handler]) routes.push({ file: f.path, method: r.method, path: '/' + name, line: r.line, handler: name, framework: 'firebase', ...(r.doc ? { doc: r.doc } : {}) });
         continue;
       }
+      // MCP tools and hand-written routers answer at the paths they name
+      if (r.framework === 'mcp' || r.framework === 'handwritten') { routes.push({ file: f.path, method: r.method, path: r.path, line: r.line, framework: r.framework, ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}) }); continue; }
       const defPrefix = (r.var && f.routers?.[r.var]) || '';
       const mw = mountMw(f.path, r.var);
       for (const mp of outerPrefixes(f.path, r.var)) routes.push({ file: f.path, method: r.method, path: joinPath(mp, defPrefix, r.path), line: r.line, ...(r.handler ? { handler: r.handler } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(mw.length ? { mountMw: mw } : {}) });
@@ -135,13 +137,17 @@ function score(c, r) {
  * @returns [{ from, to, method, path, call, line }]
  */
 export function matchCalls(files, routes) {
-  const rs = routes.map((r) => ({ ...r, segs: routeSegments(r.path) }));
+  // an MCP tool is called through its server's /mcp route, never by URL
+  const rs = routes.filter((r) => r.method !== 'TOOL').map((r) => ({ ...r, segs: routeSegments(r.path) }));
   const pending = [];
   const learned = new Map(); // caller file or dir -> Map(prefix -> count)
   const learn = (key, prefix) => { if (!learned.has(key)) learned.set(key, new Map()); const m = learned.get(key); m.set(prefix, (m.get(prefix) || 0) + 1); };
   for (const f of files) {
+    // a server spelling out its own address (OAuth metadata, a guide page) isn't calling anything
+    const own = new Set(rs.filter((r) => r.file === f.path).map((r) => r.segs.join('/')));
     for (const call of f.calls || []) {
       const cs = routeSegments(call.path);
+      if (own.has(cs.join('/'))) continue;
       let best = -Infinity, hits = [];
       for (const r of rs) {
         if (r.file === f.path) continue;
