@@ -49,6 +49,7 @@
   --scrim: rgba(0, 0, 0, .45); --scrim-2: rgba(0, 0, 0, .5);
   --shadow-lift: 0 18px 40px -20px rgba(0, 0, 0, 1);
   --shadow-deep: 0 24px 64px -24px rgba(0, 0, 0, .9);
+  --shadow-tiny: 0 1px 2px rgba(0, 0, 0, .18);
   --ring: rgba(var(--ink), .88); --focus: rgba(var(--ink), .16);
   --r-card: 20px; --r-panel: 24px; --r-ctl: 12px;
   --ease: cubic-bezier(.16, 1, .3, 1); --ease-io: cubic-bezier(.65, 0, .35, 1);
@@ -82,6 +83,7 @@
   --shadow-float: 0 0 0 1px rgba(0, 0, 0, .1), 0 20px 48px -22px rgba(0, 0, 0, .4);
   --shadow-lift: 0 16px 32px -18px rgba(0, 0, 0, .4);
   --shadow-deep: 0 20px 48px -22px rgba(0, 0, 0, .4);
+  --shadow-tiny: 0 1px 2px rgba(0, 0, 0, .18);
   --k-import: #50555c; --k-http: #1f5fd6; --k-call: #6a45d6; --k-rpc: #4450cf; --k-event: #c43a85; --k-queue: #a8710c; --k-data: #0b7f6b; --k-config: #4f5661; --k-contains: #8d8d8d;
   --n-ui: #1f7ac4; --n-service: #7a5ad8; --n-worker: #a8710c; --n-library: #1a8a5b; --n-feature: #3b6fd1; --n-data: #0f8a76; --n-config: #666666;
   --n-test: #c43c86; --n-script: #c06a1d; --n-infra: #c94a4a; --n-external: #a24dbb; --n-misc: #666666; --n-dir: #666666; --n-file: #666666;
@@ -318,6 +320,13 @@ body.no-panel #panel { transform: translateX(24px) scale(.98); opacity: 0; point
 body.resizing #panel-resize::after { background: rgba(var(--ink), .4); }
 body.resizing, body.resizing * { cursor: ew-resize !important; user-select: none; }
 body.resizing #panel, body.resizing #ask, body.resizing #flowbar { transition: none; }
+body.exported #ask { display: none; }
+#madewith { position: absolute; left: calc((100% - var(--pw)) / 2); bottom: 20px; transform: translateX(-50%); z-index: 4; display: inline-flex; align-items: center; gap: 8px; padding: 8px 15px 8px 12px; border-radius: 999px; font-size: 12.5px; color: var(--text-3); text-decoration: none; white-space: nowrap; transition: left .45s var(--ease), color .15s var(--ease); }
+#madewith .mark { height: 13px; }
+#madewith b { color: var(--text); font-weight: 600; }
+#madewith:hover { color: var(--text); }
+@media (max-width: 700px) { #madewith .x { display: none; } }
+.xtag { font-size: 11.5px; font-weight: 500; color: var(--text-3); background: rgba(var(--ink), .06); border-radius: 999px; padding: 3px 9px; margin-left: 8px; white-space: nowrap; cursor: default; }
 body.no-panel #panel-resize { opacity: 0; pointer-events: none; }
 #panel::-webkit-scrollbar { width: 12px; } #panel::-webkit-scrollbar-thumb { background: rgba(var(--ink), .1); border-radius: 10px; border: 4px solid transparent; background-clip: padding-box; }
 #panel > * { animation: panelIn .4s var(--ease) both; }
@@ -388,6 +397,12 @@ body.no-panel #panel-resize { opacity: 0; pointer-events: none; }
 .chip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chip button { border: 0; background: none; color: var(--text-3); cursor: pointer; width: 20px; height: 20px; border-radius: 999px; display: grid; place-items: center; flex: none; }
 .chip button:hover { background: rgba(var(--ink), .1); color: var(--text); }
+/* a blueprint's Ask / Change switch */
+#ask-mode { display: inline-flex; flex: none; gap: 2px; padding: 3px; margin-left: -10px; border-radius: 999px; background: rgba(var(--ink), .06); }
+#ask-mode button { border: 0; background: none; color: var(--text-3); font: inherit; font-size: 12.5px; font-weight: 500; height: 28px; padding: 0 12px; border-radius: 999px; cursor: pointer; transition: background .15s var(--ease), color .15s var(--ease); }
+#ask-mode button:hover { color: var(--text); }
+#ask-mode button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow-tiny); }
+#ask-mode button:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 #ask-input { flex: 1; min-width: 160px; height: 38px; background: none; border: 0; outline: none; font-size: 15px; color: var(--text); }
 #ask-input::placeholder { color: var(--text-3); }
 #ask-input:disabled { cursor: not-allowed; }
@@ -528,6 +543,10 @@ const AGENT = (window.FLOORPLAN_SERVER?.engine || window.FLOORPLAN_SERVER?.want 
       signIn: 'Run <code>claude</code> in a terminal once to sign in, then ask again.' };
 const Cap = (t) => t[0].toUpperCase() + t.slice(1);
 if (!G) { document.body.innerHTML = '<p style="padding:2rem">No data. Run build.mjs.</p>'; return; }
+// a blueprint: planned from a PRD, so its files don't exist yet (no line counts, nothing to open in an editor)
+const PLAN = !!G.meta.blueprint;
+// an exported copy (serve.mjs --export, or the Export button): read-only, for people without Claude or Codex
+const EXPORTED = G.meta.exported || null;
 if (typeof ELK === 'undefined') { document.body.innerHTML = '<p style="padding:2rem">Could not load the ELK layout engine. Rebuild the map with build.mjs.</p>'; return; }
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -887,7 +906,7 @@ function cardTip(id) {
   const st = statsOf(id);
   const kind = i.type === 'node' ? i.kind : i.type === 'route' ? endpointKind(i.r) : i.type === 'symbol' ? i.symKind : i.type === 'module' ? 'file' : i.type;
   const where = i.type === 'node' ? (i.n.paths || []).join('\n') : i.type === 'route' ? `${i.f.p}${i.r.h ? ` · ${i.r.h}()` : ''}` : i.path || '';
-  const size = st?.files ? (i.type === 'file' || i.type === 'module' ? `${fmt(st.loc)} lines` : `${plural(st.files, 'file')} · ${fmt(st.loc)} lines`) : '';
+  const size = !st?.files ? '' : PLAN ? (i.type === 'file' || i.type === 'module' ? 'planned' : plural(st.files, 'planned file')) : i.type === 'file' || i.type === 'module' ? `${fmt(st.loc)} lines` : `${plural(st.files, 'file')} · ${fmt(st.loc)} lines`;
   const hints = [drillable(id) && state.container !== id ? '<span><span class="kbd">2×click</span> open</span>' : '', '<span><span class="kbd">right-click</span> more</span>'].join('');
   return `<div class="tt">${h(i.name)}</div><div class="td" style="text-transform:capitalize">${h(kind)}${size ? ` · ${size}` : ''}</div>${where ? `<div class="tp">${h(where)}</div>` : ''}${recentTip(id)}<div class="th">${hints}</div>`;
 }
@@ -1105,7 +1124,7 @@ function itemMenu(id) {
     id.startsWith('x:') ? { label: `Go to ${i.name}`, icon: 'right', hint: '2×click', run: () => reveal(real) }
       : drillable(real) && state.container !== real ? { label: 'Open', icon: 'drill', hint: '2×click', run: () => open(real) } : null,
     state.container === 'q:answer' && !id.startsWith('x:') ? { label: 'Show on the map', icon: 'external', run: () => reveal(real) } : null,
-    { label: 'Ask about this', icon: 'spark', run: () => addAskContext(real) },
+    EXPORTED ? null : { label: 'Ask about this', icon: 'spark', run: () => addAskContext(real) },
     { label: 'Show details', icon: 'panel', run: () => { setPanel(true); if (id.startsWith('x:')) reveal(real); else select(id); } },
     '-',
     path ? { label: i.type === 'route' ? 'Copy endpoint' : 'Copy path', icon: 'copy', run: () => copy(path) } : null,
@@ -1117,7 +1136,7 @@ function edgeMenu(e) {
   const ep = (x) => x.startsWith('x:') ? connEntity(x) : x.startsWith('m:') ? 'f:' + x.slice(2) : x;
   return [
     { title: `${nameOf(e.a)} → ${nameOf(e.b)}` },
-    { label: 'Ask about this connection', icon: 'spark', run: () => { addAskContext(ep(e.a)); addAskContext(ep(e.b)); } },
+    EXPORTED ? null : { label: 'Ask about this connection', icon: 'spark', run: () => { addAskContext(ep(e.a)); addAskContext(ep(e.b)); } },
     { label: 'Show details', icon: 'panel', run: () => { setPanel(true); select({ edge: e.id }); } },
     '-',
     { label: `Go to ${nameOf(e.a)}`, icon: 'left', run: () => reveal(ep(e.a)) },
@@ -1131,7 +1150,7 @@ function canvasMenu() {
     state.container !== 'root' ? { label: 'Back to overview', icon: 'home', run: () => go('root') } : null,
     '-',
     { label: 'Search', icon: 'search', hint: '/', run: openPalette },
-    { label: 'Ask about this view', icon: 'spark', run: () => { if (state.container !== 'root' && state.container !== 'q:answer') addAskContext(state.container); askInput.focus(); } },
+    EXPORTED ? null : { label: 'Ask about this view', icon: 'spark', run: () => { if (state.container !== 'root' && state.container !== 'q:answer') addAskContext(state.container); askInput.focus(); } },
   ];
 }
 svg.addEventListener('contextmenu', (ev) => { ev.preventDefault(); hideTip(); openMenu(ev, canvasMenu()); });
@@ -1323,7 +1342,7 @@ function renderLegend(view) {
 }
 
 // ======================= inspector =======================
-const editorUrl = (p, line = 1) => G.meta.root ? `vscode://file/${encodeURI(G.meta.root.replace(/\\/g, '/'))}/${encodeURI(p)}:${line}` : null;
+const editorUrl = (p, line = 1) => G.meta.root && !PLAN ? `vscode://file/${encodeURI(G.meta.root.replace(/\\/g, '/'))}/${encodeURI(p)}:${line}` : null;
 const rowFor = (item, extra = '', dotColor) => {
   const i = info(item);
   return `<a class="row" data-go="${h(item)}" title="${h(i.path || '')}"><span class="dot" style="background:${dotColor || colorOf(i)}"></span><span class="rt"><div class="rn">${h(i.name)}</div>${i.desc ? `<div class="rd">${h(i.desc)}</div>` : ''}</span>${extra ? `<span class="rc">${extra}</span>` : ''}</a>`;
@@ -1397,7 +1416,7 @@ function systemsSection(tops) {
   const parts = SYSTEM_GROUPS.map((g) => {
     const items = tops.filter((t) => g.kinds.includes(info(t).kind));
     items.forEach((t) => placed.add(t));
-    return items.length ? `<div class="group-h">${h(g.label)}<span class="gd">${h(g.hint)}</span></div><div class="list">${items.map((t) => rowFor(t, info(t).kind === 'external' ? '' : technical() && statsOf(t)?.files ? fmt(statsOf(t).loc) + ' loc' : statsOf(t)?.files ? plural(statsOf(t).files, 'file') : '')).join('')}</div>` : '';
+    return items.length ? `<div class="group-h">${h(g.label)}<span class="gd">${h(g.hint)}</span></div><div class="list">${items.map((t) => rowFor(t, info(t).kind === 'external' ? '' : technical() && !PLAN && statsOf(t)?.files ? fmt(statsOf(t).loc) + ' loc' : statsOf(t)?.files ? plural(statsOf(t).files, 'file') : '')).join('')}</div>` : '';
   });
   const rest = tops.filter((t) => !placed.has(t));
   if (rest.length) parts.push(`<div class="group-h">Other</div><div class="list">${rest.map((t) => rowFor(t)).join('')}</div>`);
@@ -1408,8 +1427,8 @@ function overviewPanel() {
   const p = G.project;
   const tops = kids.get('root') || [];
   const undescribed = G.files.filter((f) => f.auto).length + routes.filter((r) => r.auto).length;
-  return `<div class="sec"><div class="ph"><span class="ico" style="--c:var(--accent)">${icon('feature')}</span><span class="kind">Codebase</span></div><h2 class="pt">${h(p.name)}</h2>${p.summary ? `<p class="pd">${h(p.summary)}</p>` : ''}
-      <div class="stats" style="margin-top:14px"><div><b>${fmt(G.meta.counts.files)}</b><span>files</span></div><div><b>${fmt(G.meta.counts.loc)}</b><span>lines</span></div><div><b>${fmt(routes.length)}</b><span>endpoints</span></div></div>
+  return `<div class="sec"><div class="ph"><span class="ico" style="--c:var(--accent)">${icon('feature')}</span><span class="kind">${PLAN ? 'Blueprint' : 'Codebase'}</span></div><h2 class="pt">${h(p.name)}</h2>${p.summary ? `<p class="pd">${h(p.summary)}</p>` : ''}
+      <div class="stats" style="margin-top:14px"><div><b>${fmt(G.meta.counts.files)}</b><span>${PLAN ? 'planned files' : 'files'}</span></div>${PLAN ? `<div><b>${fmt((G.screens || []).length)}</b><span>screens</span></div>` : `<div><b>${fmt(G.meta.counts.loc)}</b><span>lines</span></div>`}<div><b>${fmt(routes.length)}</b><span>endpoints</span></div></div>
       ${undescribed ? `<div class="callout">${undescribed} files and endpoints still use generated names. Run the skill again to describe them.</div>` : ''}</div>
     ${systemsSection(tops)}
     ${listSec('Guided flows', G.flows.map((f) => `<a class="row" data-flow="${h(f.id)}"><span class="dot" style="background:var(--accent)"></span><span class="rt"><div class="rn">${h(f.title)}</div>${f.description ? `<div class="rd">${h(f.description)}</div>` : ''}</span><span class="rc">${f.steps.length} steps</span></a>`))}
@@ -1453,23 +1472,24 @@ function itemPanel(item, viaConnector) {
       const tot = langs.reduce((a, [, v]) => a + v, 0) || 1;
       const palette = ['var(--n-service)', 'var(--n-ui)', 'var(--n-library)', 'var(--n-worker)', 'var(--n-test)']; // theme colours, so light mode gets its own
       const nr = routes.filter((r) => chain('f:' + r.f).includes(item)).length;
-      html += `<div class="sec"><div class="stats"><div><b>${fmt(s.files)}</b><span>files</span></div><div><b>${fmt(s.loc)}</b><span>lines</span></div><div><b>${nr}</b><span>endpoints</span></div></div>
-        ${langs.length ? `<div class="bar">${langs.map(([, v], k) => `<span style="flex:${v};background:${palette[k]}"></span>`).join('')}</div><div class="legend-row">${langs.map(([l, v], k) => `<span><span class="dot" style="background:${palette[k]}"></span>${h(l)} ${Math.round((v / tot) * 100)}%</span>`).join('')}</div>` : ''}</div>`;
+      html += `<div class="sec"><div class="stats"><div><b>${fmt(s.files)}</b><span>${PLAN ? 'planned files' : 'files'}</span></div>${PLAN ? '' : `<div><b>${fmt(s.loc)}</b><span>lines</span></div>`}<div><b>${nr}</b><span>endpoints</span></div></div>
+        ${langs.length && !PLAN ? `<div class="bar">${langs.map(([, v], k) => `<span style="flex:${v};background:${palette[k]}"></span>`).join('')}</div><div class="legend-row">${langs.map(([l, v], k) => `<span><span class="dot" style="background:${palette[k]}"></span>${h(l)} ${Math.round((v / tot) * 100)}%</span>`).join('')}</div>` : ''}</div>`;
     }
     if (n?.packages?.length || n?.hosts?.length || n?.tags?.length) html += `<div class="sec"><h3>Matched by</h3><div class="tags">${[...n.packages.map((p) => 'pkg ' + p), ...n.hosts.map((p) => 'host ' + p), ...n.tags.map((t) => '#' + t)].map((t) => `<span class="tag">${h(t)}</span>`).join('')}</div></div>`;
     html += listSec('Inside', (kids.get(item) || []).filter((k) => !k.startsWith('f:')).map((k) => rowFor(k)));
     const c = connections(item);
     html += listSec('Used by', c.inn) + listSec('Depends on', c.out);
     const fl = (i.d ? i.d.files : G.files.filter((f) => chain('f:' + f.p).includes(item))).slice().sort((a, b) => b.loc - a.loc);
-    html += listSec('Files', fl.map((f) => rowFor('f:' + f.p, fmt(f.loc))), fl.length, 25);
+    html += listSec(PLAN ? 'Planned files' : 'Files', fl.map((f) => rowFor('f:' + f.p, PLAN ? '' : fmt(f.loc))), fl.length, 25);
   } else if (i.type === 'file' || i.type === 'module') {
     const f = i.f, fid = 'f:' + f.p, url = editorUrl(f.p);
     if (f.note) html += `<div class="callout">${h(f.note)}</div>`;
+    if (f.tooLarge) html += `<div class="callout">Too big for Floorplan to read, so what it uses, its endpoints and any secrets in it weren’t checked. Ask Claude or Codex to update the floorplan with a bigger file limit to include it.</div>`;
     html += pathBox(f.p);
     if (url) actions.push(`<a class="btn soft" href="${url}">${iconI('open')}Open in editor</a>`);
     if (actions.length) html += `<div class="actions">${actions.join('')}</div>`;
     const owner = nodes.get(f.n);
-    html += `</div><div class="sec"><div class="stats"><div><b>${fmt(f.loc)}</b><span>lines</span></div><div><b>${(routesByFile.get(f.p) || []).length}</b><span>endpoints</span></div><div><b>${technical() ? (f.s || []).length : fmt(G.links.filter((l) => l.b === 'f:' + f.p).length)}</b><span>${technical() ? 'exports' : 'used by'}</span></div></div>
+    html += `</div><div class="sec"><div class="stats">${PLAN ? `<div><b>${fmt(G.links.filter((l) => l.a === fid).length)}</b><span>uses</span></div>` : `<div><b>${fmt(f.loc)}</b><span>lines</span></div>`}<div><b>${(routesByFile.get(f.p) || []).length}</b><span>endpoints</span></div><div><b>${technical() ? (f.s || []).length : fmt(G.links.filter((l) => l.b === 'f:' + f.p).length)}</b><span>${technical() ? 'exports' : 'used by'}</span></div></div>
       ${owner ? `<div class="list" style="margin-top:12px">${rowFor('n:' + owner.id, 'module')}</div>` : ''}</div>`;
     html += listSec('Endpoints', (routesByFile.get(f.p) || []).map((ri) => routeRow(ri)), undefined, 60);
     const inL = G.links.filter((l) => l.b === fid), outL = G.links.filter((l) => l.a === fid);
@@ -1568,14 +1588,14 @@ $('#search-btn').onclick = openPalette;
 const fm = $('#flowmenu');
 fm.addEventListener('click', (ev) => ev.stopPropagation());
 function renderFlowMenu() {
-  fm.innerHTML = G.flows.map((f) => f.custom
+  fm.innerHTML = G.flows.map((f) => f.custom && !EXPORTED
     ? `<div class="r custom" data-flow="${h(f.id)}"><div class="rt"><b>${h(f.title)}<span class="yours">yours</span></b><span>${f.steps.length} steps${f.description ? ' · ' + h(f.description) : ''}</span></div><button class="del" data-del="${h(f.id)}" title="Delete flow">${iconI('x')}</button></div>`
     : `<div class="r" data-flow="${h(f.id)}"><b>${h(f.title)}</b><span>${f.steps.length} steps${f.description ? ' · ' + h(f.description) : ''}</span></div>`).join('')
-    + (G.flows.length ? '<div class="mi-sep"></div>' : '')
-    + `<div class="r new" data-new>${iconI('spark')}<b>Request a new flow…</b></div>`;
+    + (EXPORTED ? (G.flows.length ? '' : '<div class="r" style="cursor:default"><span>No flows in this copy.</span></div>') : (G.flows.length ? '<div class="mi-sep"></div>' : '')
+    + `<div class="r new" data-new>${iconI('spark')}<b>Request a new flow…</b></div>`);
   fm.querySelectorAll('[data-flow]').forEach((r) => r.onclick = () => { fm.classList.remove('open'); startFlow(r.dataset.flow); });
   fm.querySelectorAll('[data-del]').forEach((b) => b.onclick = (ev) => { ev.stopPropagation(); deleteCustomFlow(b.dataset.del); });
-  fm.querySelector('[data-new]').onclick = showFlowForm;
+  const nf = fm.querySelector('[data-new]'); if (nf) nf.onclick = showFlowForm;
 }
 function showFlowForm() {
   fm.innerHTML = `<form class="ff"><label>Describe what to trace, and ${AGENT.name} builds a step-by-step flow through the map.</label>
@@ -1752,6 +1772,7 @@ function setEngine(engine, label, warning) {
   askInput.placeholder = engine ? `Ask anything about ${G.project.name}…` : 'Asking is unavailable';
   if (typeof renderChips === 'function' && askState.context) renderChips();
   setWarning(warning || null);
+  addModeSwitch();
 }
 async function detectEngine() {
   const S = window.FLOORPLAN_SERVER;
@@ -1847,6 +1868,68 @@ function cancelAsk() {
   if (askState.engine === 'cli') fetch('/api/cancel', { method: 'POST', headers: { 'x-floorplan-token': window.FLOORPLAN_SERVER.token } }).catch(() => {});
 }
 
+// ---------- changing a blueprint from the map (served by serve.mjs) ----------
+// The Ask bar gets an Ask / Change switch. A change goes to the agent, the server checks and saves the
+// updated plan and redraws the map, every open tab reloads, and the new and changed cards are highlighted
+// as recent work. What changed is kept across that reload in sessionStorage, with an Undo.
+const CHANGE_KEY = 'floorplan-change';
+// a server whose engine can't be held to the plan's format says change: false
+const canChange = () => PLAN && askState.engine === 'cli' && window.FLOORPLAN_SERVER?.change !== false;
+function setAskMode(m) {
+  askState.mode = canChange() && m === 'change' ? 'change' : 'ask';
+  $('#ask-mode')?.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.m === askState.mode); b.setAttribute('aria-pressed', String(b.dataset.m === askState.mode)); });
+  if (askState.engine) askInput.placeholder = askState.mode === 'change' ? 'Ask for a change, e.g. “also plan out refunds”…' : `Ask anything about ${G.project.name}…`;
+  askSend.title = askState.busy ? 'Stop' : askState.mode === 'change' ? 'Make this change' : 'Ask';
+}
+function addModeSwitch() {
+  if (!canChange() || $('#ask-mode')) return;
+  const sw = document.createElement('span');
+  sw.id = 'ask-mode';
+  sw.innerHTML = '<button type="button" data-m="ask" title="Ask a question about the plan">Ask</button><button type="button" data-m="change" title="Ask for a change, addition or removal, and the map is redrawn">Change</button>';
+  sw.querySelectorAll('button').forEach((b) => b.onclick = () => { setAskMode(b.dataset.m); askInput.focus(); });
+  $('#ask-form').prepend(sw);
+  setAskMode('ask');
+}
+const stash = { get: () => { try { return JSON.parse(sessionStorage.getItem(CHANGE_KEY) || 'null'); } catch { return null; } }, set: (v) => { try { v ? sessionStorage.setItem(CHANGE_KEY, JSON.stringify(v)) : sessionStorage.removeItem(CHANGE_KEY); } catch {} } };
+async function requestChange(question) {
+  setBusy(true);
+  askState.ctl = new AbortController();
+  const lines = ['Reading the plan…'];
+  const progress = (t) => { lines.push(t); showProgress(question, lines.slice(-6)); };
+  showProgress(question, lines);
+  try {
+    const r = await askViaCli(question, progress, 'change');
+    stash.set({ question, title: r.title, summary: r.summary, followups: r.followups || [], undo: r.undo, at: Date.now() });
+    progress('Redrawing the map');
+    setTimeout(() => location.reload(), 4000); // in case the reload notice doesn't arrive
+  } catch (e) {
+    if (e?.name === 'AbortError') showFailure(question, 'cancelled');
+    else if (e?.code === 'change_invalid' || e?.code === 'busy') sheetShell(question, `<p class="err">${h(String(e.message).split('\n')[0])}</p>${md(String(e.message).split('\n').slice(1).join('\n'))}`);
+    else showFailure(question, e?.code || 'upstream_error', e?.message || String(e));
+  } finally { setBusy(false); }
+}
+/** After the reload a change causes: what changed, with Undo and the changed cards on one board. */
+function showChangeResult() {
+  const c = stash.get();
+  stash.set(null);
+  if (!c) return;
+  if (c.undone) { toast('Change undone'); return; }
+  if (Date.now() - c.at > 120000) return;
+  const items = (G.recent?.items || []).filter((x) => parentOf.has(x.id)).map((x) => ({ id: x.id, note: x.note }));
+  sheetShell(c.question, `<p><strong>${h(c.title || 'Plan updated')}</strong></p>${md(c.summary)}
+    <div class="sheet-actions">${items.length ? `<button class="btn soft" data-cr="show">${iconI('search')}Show ${plural(items.length, 'change')}</button>` : ''}<button class="btn soft" data-cr="undo">${iconI('left')}Undo</button></div>
+    ${c.followups?.length ? `<div class="followups">${c.followups.slice(0, 3).map((f) => `<button data-cf="${h(f)}">${h(f)}</button>`).join('')}</div>` : ''}`);
+  sheet.querySelector('[data-cr="show"]')?.addEventListener('click', () => showBoard({ title: c.title || 'What changed', question: c.question, items }));
+  sheet.querySelector('[data-cr="undo"]').addEventListener('click', async (ev) => {
+    ev.currentTarget.disabled = true;
+    const r = await fetch('/api/plan/undo', { method: 'POST', headers: { 'x-floorplan-token': window.FLOORPLAN_SERVER.token } }).then((x) => x.json()).catch(() => ({ ok: false, error: 'Could not reach the map server.' }));
+    if (!r.ok) { toast(r.error || 'Couldn’t undo'); ev.currentTarget.disabled = false; return; }
+    stash.set({ undone: true, at: Date.now() });
+    setTimeout(() => location.reload(), 4000);
+  });
+  sheet.querySelectorAll('[data-cf]').forEach((b) => b.onclick = () => { setAskMode('change'); askInput.value = b.dataset.cf; submitAsk(); });
+}
+
 async function askViaCli(question, progress, mode = 'ask') {
   const res = await fetch('/api/ask', {
     method: 'POST', signal: askState.ctl.signal,
@@ -1907,7 +1990,7 @@ function renderChips() {
   const box = $('#ask-chips');
   box.innerHTML = askState.context.map((id) => { const i = info(id); return `<span class="chip" title="${h(i.path || '')}"><span class="ico" style="--c:${colorOf(i)}">${icon(iconKey(i))}</span><span>${h(i.name)}</span><button type="button" data-rm="${h(id)}" aria-label="Remove">${iconI('x')}</button></span>`; }).join('');
   box.querySelectorAll('[data-rm]').forEach((b) => b.onclick = () => { askState.context = askState.context.filter((x) => x !== b.dataset.rm); renderChips(); askInput.focus(); });
-  askInput.placeholder = !askState.engine ? 'Asking is unavailable' : askState.context.length ? 'Ask about this…' : `Ask anything about ${G.project.name}…`;
+  askInput.placeholder = !askState.engine ? 'Asking is unavailable' : askState.mode === 'change' ? (askState.context.length ? 'What should change here?' : 'Ask for a change, e.g. “also plan out refunds”…') : askState.context.length ? 'Ask about this…' : `Ask anything about ${G.project.name}…`;
   askSend.disabled = !askState.engine;
 }
 askInput.addEventListener('keydown', (ev) => { if (ev.key === 'Backspace' && !askInput.value && askState.context.length) { askState.context.pop(); renderChips(); } });
@@ -1920,6 +2003,7 @@ async function submitAsk() {
   if (!question || !askState.engine) return;
   askInput.value = '';
   askState.context = []; renderChips();
+  if (askState.mode === 'change') return requestChange(ctxIds.length ? `${question}\n\nThis is about: ${ctxIds.map((id) => `${id} (${info(id).name})`).join(', ')}.` : question);
   const shown = question;
   // what Claude sees: the question plus the pinned items, by id, so it starts from them
   if (ctxIds.length) question += `\n\nFocus on these map items: ${ctxIds.map((id) => `${id} (${info(id).name})`).join(', ')}.`;
@@ -1938,12 +2022,27 @@ async function submitAsk() {
 }
 $('#ask-form').addEventListener('submit', (ev) => { ev.preventDefault(); submitAsk(); });
 askSend.addEventListener('click', (ev) => { if (askState.busy) { ev.preventDefault(); cancelAsk(); } });
-detectEngine();
+if (!EXPORTED) detectEngine();
 renderFlowMenu();
-loadCustomFlows();
+if (!EXPORTED) loadCustomFlows();
 
 // ======================= boot =======================
 $('#proj-name').textContent = G.project.name;
+if (EXPORTED) {
+  document.body.classList.add('exported');
+  const at = new Date(EXPORTED.at);
+  const tag = document.createElement('span');
+  tag.className = 'xtag';
+  tag.textContent = isNaN(at) ? 'Exported copy' : `Exported ${at.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  tag.title = 'A copy of this map to look around in. Asking questions needs Floorplan with Claude Code or Codex, in the codebase itself.';
+  $('#proj-name').after(tag);
+  // whoever receives a copy can find where it came from
+  const made = document.createElement('a');
+  made.id = 'madewith'; made.className = 'glass';
+  made.href = 'https://github.com/haydenschmitty/floorplan'; made.target = '_blank'; made.rel = 'noopener';
+  made.innerHTML = `Made with <img class="mark" src="${$('.brand .mark').src}" alt=""><b>Floorplan</b><span class="x">· free and open source</span>`;
+  $('#stage').appendChild(made);
+}
 document.title = `${G.project.name} map`;
 $('#btn-up').onclick = up;
 // drag the panel's left edge to resize it; the width sticks between visits
@@ -2024,7 +2123,7 @@ const custom = { panel: null };
 function emit(event, data) { for (const fn of ext.listeners[event] || []) { try { fn(data); } catch (e) { console.error('floorplan extension', e); } } }
 window.Floorplan = Object.freeze({
   version: 1,
-  graph: G, query: Q, state, agent: AGENT,
+  graph: G, query: Q, state, agent: AGENT, exported: EXPORTED,
   // model helpers
   info, chain, children: (id) => visibleKids(id), parentOf: (id) => parentOf.get(id), exists: (id) => Q.exists(id),
   files, nodes, routes, colorOf, iconKey,
@@ -2037,6 +2136,16 @@ window.Floorplan = Object.freeze({
   closeMenus: () => { closeMenu(); fm.classList.remove('open'); legendEl.classList.remove('open'); },
   // asking
   addAskContext, ask: (text) => { askInput.value = text; submitAsk(); }, askEngine: () => askState.engine,
+  // a blueprint's Change mode: whether it's available here, and putting a request in the Ask bar to finish and send
+  canChange: () => canChange(),
+  draftChange(text) {
+    if (!canChange()) return false;
+    setAskMode('change');
+    askInput.value = text;
+    askInput.focus();
+    askInput.setSelectionRange(text.length, text.length);
+    return true;
+  },
   // chrome
   addHeaderButton({ id, label = '', icon: ic, svg, title = '', onClick }) {
     const b = document.createElement('button');
@@ -2060,7 +2169,7 @@ technicalFlag = !!store.get('technical', false);
 const init = readHash();
 state.container = init.v; state.selected = init.s;
 const fontsReady = document.fonts?.ready ? Promise.race([document.fonts.ready, new Promise((ok) => setTimeout(ok, 1500))]) : Promise.resolve();
-fontsReady.then(() => render({ after: () => { renderPanel(); emit('ready', {}); } }));
+fontsReady.then(() => render({ after: () => { renderPanel(); emit('ready', {}); if (PLAN && window.FLOORPLAN_SERVER) showChangeResult(); } }));
 })();
 </script>
 <!--__UI_EXTENSIONS__-->

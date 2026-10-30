@@ -55,7 +55,7 @@ It finds `codex` on your PATH, and on Windows the CLI that comes with the Codex 
 
 - **No notes file.** In Claude Code, Floorplan keeps a short note in `CLAUDE.local.md` (personal and never committed) that points future sessions at the map. Codex has no personal, uncommitted equivalent (`AGENTS.md` is shared with your team), so in Codex Floorplan leaves your project's notes alone.
 - **No Claude app.** Publishing the map to the Claude app is a Claude feature. In Codex the map opens in your browser, served from your computer.
-- **"Fix with Codex".** The Health panel's ready-made fix prompts are for pasting into Codex.
+- **"Fix with Codex".** The Health panel's ready-made fix prompts are for pasting into Codex. On a [blueprint](getting-started.md#plan-something-you-havent-built-yet), the same goes for **Build this with Codex**, and the Ask bar's **Change** switch runs Codex in its read-only sandbox too: Codex replies with the updated plan, and the map's server saves it.
 
 ## Update or remove it
 

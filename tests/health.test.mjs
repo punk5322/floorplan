@@ -43,3 +43,14 @@ test('FastAPI: Annotated dependency aliases count as sign-in checks (#4)', () =>
   // routes with only a database session (SessionDep, SqlSessionDep over get_sql_session) aren't
   assert.deepEqual(openEndpoints(graph), ['POST /comments', 'POST /feedback']);
 });
+
+test('FastAPI: checks added where a router is included count as sign-in checks', () => {
+  const graph = buildFixture('fastapi-include-router');
+  assert.equal(graph.routes.length, 4, `expected the sample's 4 endpoints, found ${graph.routes.length}`);
+  // the router imported under another name (item_routes) still gets its prefix
+  assert.ok(graph.routes.some((r) => r.p === '/items/{item_id}'), 'expected /items/{item_id}');
+  // app.include_router(staff.router, dependencies=[Depends(require_admin)]) protects every staff route,
+  // even with a package also called staff imported first; so does a check beside a database session,
+  // over several lines; a database session alone (orders) protects nothing
+  assert.deepEqual(openEndpoints(graph), ['POST /orders']);
+});

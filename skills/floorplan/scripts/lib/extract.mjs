@@ -529,8 +529,16 @@ function extractPy(src) {
   routes.push(...pyHandRoutes(code, at), ...mcpTools(code, code, at, 'python'));
 
   const mounts = [];
-  for (const m of all(/\b(?:register_blueprint|include_router|mount)\(\s*([A-Za-z_][\w.]*)([^)]*)\)/g, code)) {
-    mounts.push({ var: m[1], prefix: /(?:url_)?prefix\s*=\s*["']([^"']*)["']/.exec(m[2])?.[1] || '', line: at(m.index) });
+  for (const m of all(/\b(register_blueprint|include_router|mount)\(\s*([A-Za-z_][\w.]*)/g, code)) {
+    // the call's arguments, up to its own closing bracket: dependencies=[Depends(x)] holds brackets of its own
+    let depth = 1, j = m.index + m[0].length;
+    while (j < code.length && depth && j - m.index < 2000) { if (code[j] === '(') depth++; else if (code[j] === ')') depth--; j++; }
+    const args = code.slice(m.index + m[0].length, j - 1);
+    // FastAPI checks applied to every route of the router where it's included:
+    // app.include_router(admin.router, dependencies=[Depends(require_admin)])
+    const deps = m[1] === 'include_router' ? /dependencies\s*=\s*\[([\s\S]*?)\]/.exec(args)?.[1] : null;
+    const mw = deps ? [...deps.matchAll(/\b(?:Depends|Security)\(\s*([\w.]+)/g)].map((d) => d[1].split('.').pop()) : [];
+    mounts.push({ var: m[2], prefix: /(?:url_)?prefix\s*=\s*["']([^"']*)["']/.exec(args)?.[1] || '', line: at(m.index), ...(mw.length ? { mw } : {}) });
   }
 
   const routeLine = /^\s*@\w+\.(route|get|post|put|patch|delete)\(/;

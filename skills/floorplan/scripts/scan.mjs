@@ -3,7 +3,7 @@
 // symbols and HTTP routes/calls, resolve them, and write floorplan/.cache/scan.json.
 // Prints a compact summary meant to be read by Claude (the JSON itself can be large).
 //
-// usage: node scan.mjs [root] [--out <file>] [--include-worktrees] [--max-file-kb 512]
+// usage: node scan.mjs [root] [--out <file>] [--include-worktrees] [--max-file-kb 2048]
 
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -20,7 +20,7 @@ const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args._[0] || '.');
 const outDir = args.out ? path.dirname(path.dirname(path.resolve(args.out))) : mapDir(root);
 const outFile = path.resolve(args.out || path.join(outDir, '.cache', 'scan.json'));
-const maxBytes = (Number(args['max-file-kb']) || 512) * 1024;
+const maxBytes = (Number(args['max-file-kb']) || 2048) * 1024;
 const t0 = Date.now();
 const hash = (s) => createHash('sha1').update(s).digest('hex').slice(0, 12);
 
@@ -85,10 +85,26 @@ for (const { path: p, repo } of fileList) {
       try { const iss = findIssues(src, f); if (iss?.length) f.issues = iss; } catch (e) { f.healthError = String(e.message || e); }
       try { const scr = findScreens(src, f); if (scr?.length) f.screens = scr; } catch (e) { f.screensError = String(e.message || e); }
     }
-  } else if (category === 'code') {
+  } else if (category === 'code' || category === 'config' || category === 'docs') {
+    // too big to read and parse, but still on the map: count its lines without loading it all
     f.tooLarge = true;
+    f.loc = countLines(abs);
   }
   files.push(f);
+}
+
+/** Lines in a file, read in chunks so a huge file is never held in memory at once. */
+function countLines(abs) {
+  let fd, n = 0, last = 10;
+  try {
+    fd = fs.openSync(abs, 'r');
+    const buf = Buffer.alloc(1 << 20);
+    for (let got; (got = fs.readSync(fd, buf, 0, buf.length, null)) > 0;) {
+      for (let i = 0; i < got; i++) if (buf[i] === 10) n++;
+      last = buf[got - 1];
+    }
+  } catch { return 0; } finally { if (fd !== undefined) fs.closeSync(fd); }
+  return n + (last === 10 ? 0 : 1);
 }
 
 // ---------- 3. resolve imports ----------
@@ -347,5 +363,12 @@ if (hostCounts.size) {
 line();
 const big = code.filter((f) => f.loc > 1500).sort((a, b) => b.loc - a.loc).slice(0, 10);
 if (big.length) { line('LARGEST FILES'); for (const f of big) line(`  ${fmtNum(f.loc).padStart(6)}  ${f.path}`); line(); }
+const unread = files.filter((f) => f.tooLarge).sort((a, b) => b.bytes - a.bytes);
+if (unread.length) {
+  line(`NOT READ  ${unread.length} file(s) over ${fmtNum(maxBytes / 1024)} KB: on the map, but their imports, endpoints, requests and secrets weren't checked. Re-run scan.mjs with --max-file-kb <bigger> to read them.`);
+  for (const f of unread.slice(0, 15)) line(`  ${fmtNum(Math.round(f.bytes / 1024)).padStart(6)} KB  ${f.path}`);
+  if (unread.length > 15) line(`  … ${unread.length - 15} more`);
+  line();
+}
 line('Next: read references/schema.md, explore entrypoints, then write floorplan/architecture.json and run build.mjs.');
 console.log(out.join('\n'));

@@ -3,6 +3,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { shopApp, scanAndBuild, cleanup } from './helpers.mjs';
@@ -49,6 +50,21 @@ test('API calls without the token are refused', async () => {
 test('API calls with the token from another website are refused', async () => {
   const r = await api('/api/flows', { headers: { 'x-floorplan-token': token, origin: 'https://evil.example' } });
   assert.equal(r.status, 403);
+});
+
+/** A request to the server under another host name, as a site that rebinds its domain to 127.0.0.1 would send. */
+const asHost = (host, p) => new Promise((resolve, reject) => {
+  const u = new URL(base + p);
+  http.get({ hostname: u.hostname, port: u.port, path: u.pathname, headers: { host, 'x-floorplan-token': token } }, (r) => { r.resume(); resolve(r.statusCode); }).on('error', reject);
+});
+
+test('requests under any other host name are refused, page included (DNS rebinding)', async () => {
+  const port = new URL(base).port;
+  assert.equal(await asHost(`evil.example:${port}`, '/'), 403);
+  assert.equal(await asHost(`evil.example:${port}`, '/api/flows'), 403);
+  assert.equal(await asHost('127.0.0.1:1', '/'), 403);
+  assert.equal(await asHost(`localhost:${port}`, '/'), 200);
+  assert.equal(await asHost(`127.0.0.1:${port}`, '/api/flows'), 200);
 });
 
 test('API calls with the token from the map itself work', async () => {

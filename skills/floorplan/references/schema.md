@@ -52,6 +52,7 @@ Kinds, briefly:
 
 ### Glob syntax
 - `**` matches any number of directories, `*` stays within one path segment, `?` matches one character, `{a,b}` is alternation.
+- A whole folder name in brackets, like `[id]`, `[...slug]` or `[[...slug]]` (Next.js, SvelteKit), matches that folder literally: `app/orders/[id]/**`. Elsewhere, `[abc]` matches one of those characters.
 - A pattern with no wildcard also matches as a directory: `backend/app` equals `backend/app/**`.
 - Paths are relative to the codebase root. In a multi-repo root they start with the repo folder.
 

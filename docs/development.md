@@ -19,9 +19,11 @@ skills/floorplan/
     schema.md                architecture.json and recent-work.json
     choosing-boundaries.md   how to carve a codebase into a good map
     writing-descriptions.md  plain-language names and descriptions
+    blueprint.md             plan.json, for a map planned from a PRD
   scripts/             Node.js, no dependencies; Claude runs these
     status.mjs     is there a map, and how stale is it (runs when the skill loads)
     scan.mjs       repos, files, imports, endpoints, requests → .cache/scan.json
+    plan.mjs       a blueprint's plan.json → the same .cache/scan.json
     build.mjs      validate, assign files, connect, Health, screens → graph.json + index.html
     describe.mjs   worksheets for Claude to name and describe files and endpoints
     refresh.mjs    incremental update: re-scan, carry over, flag changes, rebuild
@@ -30,7 +32,7 @@ skills/floorplan/
     lib/           extraction, import resolution, Swift modules and links, route matching, Health, screens, which agent is running, helpers
   assets/
     viewer.html    the map (template the build fills in)
-    ui/            viewer extensions: Theme button, glossary, Health, recent work, screens, endpoints, tour, waitlist card
+    ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, screens, endpoints, tour, waitlist card
     graph-query.js shared map lookups (viewer, query.mjs, Ask instructions)
     serve.mjs      copied into each project's floorplan/ folder; answers through Claude Code or Codex
     query-cli.mjs  becomes floorplan/query.mjs
@@ -80,8 +82,12 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `firebase.test.mjs` | Firebase Cloud Functions: callables and onRequest functions as endpoints, the website's calls to them, Screens, Health, background functions (React + Firebase sample in `fixtures/`) |
 | `swift.test.mjs` | Swift: modules from Package.swift, project.yml and Xcode projects, import and symbol links (none from comments or strings), the 40% rule, Apple frameworks as outside parts, doc comments, URL calls (SwiftPM + XcodeGen sample in `fixtures/swift-app`) |
 | `endpoints.test.mjs` | Vapor, a hand-written NWListener router, a Cloudflare Worker router, http.server, and MCP tools from the TypeScript SDK, a Swift registry and a JSON tool list (samples in `fixtures/`) |
+| `blueprint.test.mjs` | a map planned from a PRD before any code exists: plan.json errors, endpoints and calls, Screens, the design review, refreshing and switching to the real code (sample PRD in `fixtures/`) |
+| `blueprint-change.test.mjs` | changing a blueprint from the map: the agent's updated plan is checked, saved and highlighted, retried once when it fails the checks, and undone (stand-in CLI in `fixtures/fake-cli/`) |
+| `large-files.test.mjs` | files over the scan's size limit stay on the map with their line count, and the scan, Health and the map say they weren't read |
 | `sample-app.test.mjs` | a whole map of a two-repo shop: endpoints, cross-repo requests, Health, offline map, no secret values written, updates |
-| `serve.test.mjs` | the map's server: 127.0.0.1 only, token and same-origin checks, nothing served from outside its folder |
+| `serve.test.mjs` | the map's server: 127.0.0.1 only, its own host names only, token and same-origin checks, nothing served from outside its folder |
+| `export.test.mjs` | exporting a copy to share: what's left out by default, the extras when asked, the Export button's endpoint |
 | `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
 | `agents.test.mjs` | telling Claude Code from Codex, and what a map built by each records and writes |
 | `release.test.mjs` | the version agrees across both plugins' `plugin.json`, the README badge and the changelog |
@@ -97,9 +103,18 @@ Files in `skills/floorplan/assets/ui/` are inlined into every map, in name order
 - navigation (`go`, `open`, `reveal`, `showBoard`, `playFlow`);
 - `addHeaderButton` and `addPanelSection('overview' | 'item', fn)`;
 - `modal`, `toast`, `store`;
-- events (`on('ready' | 'render' | 'panel' | 'technical')`).
+- events (`on('ready' | 'render' | 'panel' | 'technical')`);
+- `exported`, set in an exported copy: leave out anything there that needs Claude, Codex or the map's server.
 
 `20-health.js` and `25-recent.js` are good examples.
+
+## Adding an agent
+
+There are two lists, and an agent can be on one or both:
+- **The agent that built the map**, in `scripts/lib/agent.mjs`: an entry in `DETECT` that recognises it from the variables it sets for every command it runs. The map records it, so its prompts name the right agent.
+- **The agent that answers questions**, in `assets/serve.mjs`: an entry in `ENGINES` with its name, where to get it, `find` (where its CLI lives, plus a `--<name> <path>` override) and `run` (the arguments and how to read its output into progress and an answer).
+
+An engine must be read-only in a way its CLI enforces, not only because the prompt asks; if it can't be, say so plainly in the docs. Set `structured: true` only when the CLI holds answers to the schema, because changing a blueprint from the map relies on it; without it, the map doesn't offer Change. Never take the command to run from the page or from saved settings. Add a stand-in CLI to `tests/fixtures/fake-cli/` and tests like `ask.test.mjs`.
 
 ## Guidelines
 

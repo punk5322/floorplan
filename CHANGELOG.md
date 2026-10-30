@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 (2026-10-30)
+## 0.5.0 (2026-10-30)
 
 - **Swift apps:** a map of an iPhone, Mac or Watch app now has its real structure. Each target and Swift package becomes a module, read from `Package.swift`, XcodeGen's `project.yml` or the Xcode project, and the AI uses them as the map's parts. Files are connected by the types and functions they use from each other, since Swift files in one module never import each other; names in comments and strings don't count, and a name used by nearly every file is left out so it doesn't drown the map. Apple frameworks that stand for something outside the app show up as outside parts: CloudKit as iCloud, HealthKit as Apple Health, EventKit as Calendar & Reminders. Doc comments describe files, and Xcode's "Created by" header is skipped.
 - **More endpoints:** Vapor and Hummingbird routes, and hand-written routers: a Cloudflare Worker comparing `url.pathname`, a Swift `NWListener` server switching on method and path, Python's http.server.
@@ -9,6 +9,31 @@
 - **Swift outside calls:** `URL(string: "https://…")` addresses, including ones with `\(…)` in them, count as calls to outside services.
 - **Fewer false Health alarms in Swift:** Keychain account and service names, and a choice between two such names, are no longer reported as passwords.
 - **Light mode everywhere:** the language bar in a part's details used fixed colours; it now follows the theme, and a test keeps every part of the map on theme colours.
+
+## 0.4.1 (2026-10-30)
+
+- **Exported copies say where they came from:** a small "Made with Floorplan" link at the bottom of an exported map leads to the project, so whoever receives one can make their own.
+
+## 0.4.0 (2026-10-30)
+
+- **Export a copy to share:** the map's new **Export** button saves one HTML file anyone can open in a browser, with nothing to install. It has the whole map without the Ask bar, your folder path or git remotes. Flows and notes go in by default; recent work and the health check (or a blueprint's design review) only if you tick them. Ask Claude or Codex to "export the floorplan", or run `node floorplan/serve.mjs --export`.
+
+## 0.3.2 (2026-10-30)
+
+- **The map's server answers only to this computer's own addresses:** it refuses requests under any other host name, so a website that points its domain at 127.0.0.1 (DNS rebinding) can't load the map, read its token and ask questions about your code.
+
+## 0.3.1 (2026-10-30)
+
+- **Asking on a map works again on Windows with the current Claude Code install:** the map's server found only the shell shim of an npm install and failed with `spawn ...\claude ENOENT`; it now finds the real `claude.exe` inside the package. Reported and fixed by @menachem-kurkus in #20 and #21.
+- **Fewer false Health alarms on FastAPI:** a check added where a router is included, like `app.include_router(admin.router, dependencies=[Depends(require_admin)])`, now protects every endpoint of that router, as `app.use('/admin', requireStaff, adminRouter)` already did on Express. A database session added there still doesn't count as a sign-in check. Fixed by @stevensiht in #15.
+- **FastAPI routers found by the name they're imported under:** a router imported under another name (`from app.routes import campaigns as campaign_routes`) gets its prefix and its checks, and a package that shares a router's name (`from app.platform import pricing` beside a `platform` router) is no longer mistaken for it. Fixed by @stevensiht in #15.
+- **No more false alarm for analytics and map tokens:** Health no longer calls Cloudflare Web Analytics' beacon token or a Mapbox public token (`pk.…`) a leaked secret. Both are public by design: the page has to send them for analytics or maps to work. Reported by @CplSyx in #23.
+- **Big files no longer vanish from the map:** files up to 2 MB are now read in full (up from 512 KB). A file over the limit still appears with its line count, the scan lists it, Health includes it among the very large files, and its card says its connections and secrets weren't checked. Reported by @Rasherb69 in #16.
+
+## 0.3.0 (2026-10-29)
+
+- **Blueprints: plan it before you build it.** Floorplan still maps the code you have; now it can also start from no code at all. Share a PRD, a spec or a description of something you want to build, and Floorplan draws the map of what it would take: every part, file, endpoint and screen, how they connect, and the outside services they rely on. It's marked as planned (dashed cards and a **Blueprint** label), Health becomes a design review of the plan (endpoints anyone could use, decisions the PRD leaves open, loose ends), and each part has **Build this with Claude** (or Codex), a ready request to build it as planned. Switch the Ask bar to **Change** to shape the plan from the map ("also plan out refunds"): the map redraws with the new and changed pieces highlighted, and **Undo** puts it back. Design review items can be settled the same way with **Resolve on the map**: an open question just needs your answer. Once the code exists, the map can switch to the real code.
+- **Bracketed folder names** like Next.js' `[id]` and `[...slug]` can be written as they are in `architecture.json` path patterns; they match that folder exactly.
 
 ## 0.2.2 (2026-10-28)
 

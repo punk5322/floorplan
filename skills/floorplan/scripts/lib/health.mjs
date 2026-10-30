@@ -108,6 +108,11 @@ function valueLooksReal(v, name) {
   return v.length >= 16 && entropy(v) >= 3.2 && /\d/.test(v) && /[a-zA-Z]/.test(v);
 }
 
+// Tokens that are public by design, because the browser has to send them: Cloudflare Web Analytics'
+// beacon (data-cf-beacon='{"token":"…"}') and Mapbox public tokens (pk.…)
+const PUBLIC_TOKEN_LINE = /data-cf-beacon|cloudflareinsights\.com/i;
+const PUBLIC_TOKEN_VALUE = /^pk\.[\w-]{20,}\.[\w-]{10,}$/;
+
 /** 1-based line numbers inside docstrings or block comments (examples there aren't real config). */
 function docLines(src, lang) {
   const set = new Set();
@@ -156,14 +161,14 @@ function findSecrets(src, f, out) {
   const quoted = /(["']?)([A-Za-z_][\w.-]*)\1\s*(?::=|=>|=|:)\s*(?:[rbuRBU]{1,2})?(["'`])([^"'`\n]{6,200})\3/g;
   const unquoted = /^\s*(?:export\s+)?([A-Za-z_][\w.-]*)\s*[:=]\s*([^\s#'"]{6,200})\s*(?:#.*)?$/;
   lines.forEach((text, i) => {
-    if (text.length > 400 || ENV_LOOKUP.test(text) || inDoc.has(i + 1) || /^\s*(#|\/\/|\*|\/\*|<!--)/.test(text)) return;
+    if (text.length > 400 || ENV_LOOKUP.test(text) || PUBLIC_TOKEN_LINE.test(text) || inDoc.has(i + 1) || /^\s*(#|\/\/|\*|\/\*|<!--)/.test(text)) return;
     if (f.lang === 'swift' && KEYCHAIN_LABEL.test(text)) return;
     // `cond ? "agent-password" : "agent-password-milo"` is a choice between two strings, not name: value
     const pairs = [...text.matchAll(quoted)].filter((m) => !(m[1] && /\?\s*$/.test(text.slice(0, m.index)))).map((m) => [m[2], m[4]]);
     if (!pairs.length && (f.category === 'config' && CONFIG_LANGS.has(f.lang))) { const u = unquoted.exec(text); if (u) pairs.push([u[1], u[2]]); }
     for (const [name, value] of pairs) {
       const n = snake(name.split('.').pop());
-      if (!SECRET_NAME.test(n) || PUBLIC_NAME.test(n) || !valueLooksReal(value, n)) continue;
+      if (!SECRET_NAME.test(n) || PUBLIC_NAME.test(n) || PUBLIC_TOKEN_VALUE.test(value) || !valueLooksReal(value, n)) continue;
       if (throwawayDb && /^(postgres|mysql|mariadb|mongo(_initdb_root)?|redis|pg|rabbitmq_default|db|database)_(root_)?(password|pass|pwd)$/.test(n)) continue;
       add(i + 1, { what: kindFromName(name), name: name.split('.').pop(), sev: 'high', hint: mask(value, PASSWORD_NAME.test(n)), generic: true });
     }
@@ -544,8 +549,9 @@ export function buildHealth({ graph, scan, arch, root }) {
     if (!guardDefs.has(name)) guardDefs.set(name, []);
     guardDefs.get(name).push({ file, alias: true, repo });
   }
-  // a sign-in check applied where the route's router is mounted: app.use('/admin', requireStaff, adminRouter)
-  const mountGuard = new Map((scan.routes || []).filter((r) => r.mountMw?.some(isGuardName)).map((r) => [`${r.file}|${r.line}|${r.method}`, r.mountMw.find(isGuardName)]));
+  // a sign-in check applied where the route's router is mounted: app.use('/admin', requireStaff, adminRouter),
+  // or app.include_router(admin.router, dependencies=[Depends(require_admin)]) (a database session isn't one)
+  const mountGuard = new Map((scan.routes || []).filter((r) => r.mountMw?.some(isGuardDep)).map((r) => [`${r.file}|${r.line}|${r.method}`, r.mountMw.find(isGuardDep)]));
   const perRepo = new Map(); // repo -> { guarded, open: [], guardCounts }
   graph.routes.forEach((r, i) => {
     const fnd = routeFinding.get(`${r.f}|${r.l}|${r.m}`);
@@ -678,7 +684,7 @@ export function buildHealth({ graph, scan, arch, root }) {
     const want = new Map(candidates.map((f) => [stemOf(f.p), f.p]));
     const mentioned = new Set();
     for (const f of scan.files) {
-      if (!['code', 'config', 'docs'].includes(f.category) || f.bytes > 524288) continue;
+      if (!['code', 'config', 'docs'].includes(f.category) || f.tooLarge) continue;
       let src;
       try { src = fs.readFileSync(path.join(root, f.path), 'utf8'); } catch { continue; }
       for (const tok of new Set(src.match(/[\w$-]+/g) || [])) { const p = want.get(tok); if (p && p !== f.path) mentioned.add(p); }
@@ -715,7 +721,7 @@ export function buildHealth({ graph, scan, arch, root }) {
       title: big.length === 1 ? 'One file is very large' : `${big.length} files are very large`,
       detail: `${big.length === 1 ? 'This file has' : 'These files each have'} over 1,000 lines${huge.length ? ` (the biggest has ${big[0].loc.toLocaleString('en-US')})` : ''}. AI assistants read and edit big files less reliably: they lose track of what's where and can break one part while fixing another. Splitting them into smaller files by job makes future changes safer.`,
       items: big.slice(0, 24).map((f) => 'f:' + f.p),
-      notes: Object.fromEntries(big.slice(0, 24).map((f) => ['f:' + f.p, `${f.loc.toLocaleString('en-US')} lines`])),
+      notes: Object.fromEntries(big.slice(0, 24).map((f) => ['f:' + f.p, `${f.loc.toLocaleString('en-US')} lines${f.tooLarge ? ': too big for Floorplan to read, so what it connects to and any secrets in it weren’t checked' : ''}`])),
       locations: big.map((f) => ({ file: f.p, line: 1 })),
       fix: [`Refactor plan: these files are very large:`, ...big.slice(0, 15).map((f) => `- ${f.p} (${f.loc.toLocaleString('en-US')} lines)`), ``, `Start with ${big[0].p}. Read it and propose how to split it into smaller files, each with one clear job (for example by feature or by type of work), keeping every public function name and behaviour the same. Show me the plan first. After I approve, move code in small steps, update the imports, and run the tests after each step. Don't change behaviour.`].join('\n'),
     });

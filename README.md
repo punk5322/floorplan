@@ -14,7 +14,7 @@ Claude or Codex reads your codebase and draws an interactive map of it. Every pa
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?style=flat-square)](https://code.claude.com/docs/en/overview)
 [![Codex plugin](https://img.shields.io/badge/Codex-plugin-111?style=flat-square)](docs/codex.md)
 [![Tests](https://img.shields.io/github/actions/workflow/status/haydenschmitty/floorplan/test.yml?branch=main&style=flat-square&label=tests)](https://github.com/haydenschmitty/floorplan/actions/workflows/test.yml)
-[![Version](https://img.shields.io/badge/version-0.3.0-111?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.0-111?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111?style=flat-square)](LICENSE)
 [![Node 18+](https://img.shields.io/badge/node-%E2%89%A518-111?style=flat-square)](https://nodejs.org)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-111?style=flat-square)](#how-it-works)
@@ -100,7 +100,11 @@ Updates re-read only what changed, and an open map reloads itself. Everything ru
 </tr>
 </table>
 
-Plus guided **flows** you can request in plain words, a one-minute **Start here** tour, search, keyboard shortcuts, and right-click actions on every card.
+Plus guided **flows** you can request in plain words, a one-minute **Start here** tour, **Export** to send a copy to anyone as one HTML file, search, keyboard shortcuts, and right-click actions on every card.
+
+### Also: blueprints, for apps you haven't built yet
+
+Floorplan is made for mapping code you already have. It can also start from a PRD, a spec or a description of something you want to build, and draw a **blueprint**: the same kind of map, showing every part, file, endpoint and screen you'd need and how they'd fit together. Cards are dashed to show it's a plan. Instead of a Health check you get a review of what the plan still leaves open, each part has a ready request to build it, and you can reshape the plan from the map ("also plan out refunds"). Once the code exists, the blueprint becomes a map of the real thing. See [Plan something you haven't built yet](docs/getting-started.md#plan-something-you-havent-built-yet).
 
 ## See it in action
 
@@ -186,6 +190,12 @@ When you've done more work, ask:
 
 Only what changed is re-read, and what you just worked on lights up under **Recent work**.
 
+**No code yet?** Floorplan can plan an app from a PRD or spec instead. Share the document and ask:
+
+> Here's my PRD. Make me a floorplan of what we'd need to build.
+
+You get a [blueprint](#also-blueprints-for-apps-you-havent-built-yet) of the planned system, clearly marked as a plan.
+
 ### Things to try
 
 | Ask Claude Code or Codex | Ask the map |
@@ -195,6 +205,7 @@ Only what changed is re-read, and what you just worked on lights up under **Rece
 | "Fix the important issues from the floorplan's Health check" | "If I change the users table, what breaks?" |
 | "Add a flow showing how a new user signs up" | "Which files handle login?" |
 | "Rewrite the floorplan for developers" | "What did we change for refunds?" |
+| "Export the floorplan so I can send it to the team" | |
 
 ## How it works
 
@@ -231,7 +242,7 @@ More in [Privacy and security](docs/privacy-and-security.md).
 
 | | |
 |---|---|
-| [Getting started](docs/getting-started.md) | Install, first map, updating, removing |
+| [Getting started](docs/getting-started.md) | Install, first map, updating, planning from a PRD, removing |
 | [Floorplan in Codex](docs/codex.md) | Installing and using it in Codex |
 | [Using the map](docs/using-the-map.md) | Every button, view, shortcut and menu |
 | [How it works](docs/how-it-works.md) | The pipeline, connection matching, refreshes |
@@ -276,6 +287,12 @@ Yes. Just ask ("rename 'Main server' to 'Shop API' on the floorplan"), or edit `
 <summary><b>Does it work with Codex as well as Claude Code?</b></summary>
 
 Yes. It's the same plugin, the same map and the same Health check. Each app runs it on your own plan: Claude Code on your Claude account, Codex on your ChatGPT sign-in. A map made in one opens fine with the other. See [Floorplan in Codex](docs/codex.md).
+</details>
+
+<details>
+<summary><b>Can I use it before I've written any code?</b></summary>
+
+Yes, though mapping existing code is what it's mainly for. Share a PRD, a spec or a description of your app and ask for a floorplan, and you get a blueprint: a map of what you'd need to build, marked as a plan, with a review of the decisions still open. You can change it from the map, then switch to a map of the real code once it's built. See [Plan something you haven't built yet](docs/getting-started.md#plan-something-you-havent-built-yet).
 </details>
 
 <details>

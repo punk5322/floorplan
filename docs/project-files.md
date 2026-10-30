@@ -10,12 +10,14 @@ Floorplan writes to exactly two places in your project: the `floorplan/` folder,
 | `graph.json` | Everything the map shows, as data | No. Rebuilt every time |
 | `architecture.json` | The parts of your app, outside services, extra connections, flows and the tour | **Yes** |
 | `descriptions/*.json` | The name and description of every file and endpoint, one file per part | **Yes** |
+| `plan.json` | Blueprints only: the planned files, endpoints and screens, who may use each endpoint, the stack, assumptions and open questions. Names and descriptions live here instead of `descriptions/` | **Yes** |
 | `recent-work.json` | What was just worked on, and why. Replaced on every update | Rarely. The AI writes it |
 | `custom-flows.json` | Flows requested from the map | Only to delete one |
 | `serve.mjs` | Serves the map locally and answers questions through the Claude Code CLI or Codex | No |
 | `query.mjs` | Looks things up in the map from the command line; Claude and Codex use it too | No |
 | `artifact.html` | A copy for opening in the Claude app, only if you asked for one | No |
-| `.cache/` | The scan, the description worksheets, the last update's changes, and the running server's address | No. Safe to delete |
+| `<project>-map.html` | An exported copy to share, only if you exported one from Claude or Codex (the map's Export button downloads it instead) | No |
+| `.cache/` | The scan, the description worksheets, the last update's changes, the running server's address, and, for a blueprint, the last 20 versions of the plan that **Undo** goes back to | No. Safe to delete, though Undo then has nothing to go back to |
 | `.gitignore` | Keeps this whole folder out of git | No |
 
 ### Editing names and structure
@@ -29,6 +31,8 @@ Your edits to `architecture.json` and `descriptions/` are kept on every update. 
 
 Or just ask Claude or Codex ("rename 'Main server' to 'Shop API' on the floorplan").
 
+A blueprint is edited the same way, through `plan.json` and `architecture.json`, or from the map with the Ask bar's **Change** switch. The plan's format is in [`blueprint.md`](../skills/floorplan/references/blueprint.md).
+
 The full format is in [`skills/floorplan/references/schema.md`](../skills/floorplan/references/schema.md), and the style guide for names and descriptions is in [`writing-descriptions.md`](../skills/floorplan/references/writing-descriptions.md).
 
 ## `CLAUDE.local.md`
@@ -39,6 +43,8 @@ In Claude Code, Floorplan adds a short marked section here, telling future Claud
 - adds the file to your clone's private ignore list, `.git/info/exclude`.
 
 To turn it off, put `<!-- floorplan:off -->` anywhere in `CLAUDE.local.md`.
+
+A blueprint adds no section, since there's no code to look up yet. It's added once the map switches to the real code.
 
 In Codex this file isn't touched. Codex has no personal, uncommitted notes file (`AGENTS.md` is shared with your team), so Floorplan doesn't add a note there.
 

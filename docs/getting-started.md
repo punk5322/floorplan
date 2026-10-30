@@ -59,6 +59,21 @@ After you, or your AI, have worked on the code:
 
 Floorplan re-scans and compares with the last map. Moved files keep their descriptions, deleted ones disappear, and only what's new or what changed in purpose is rewritten. A map already open in your browser reloads itself, and the cards that just changed light up green under **Recent work**.
 
+## Plan something you haven't built yet
+
+Everything above is about Floorplan's main job: mapping code that already exists. It has a second use, for when there's no code yet: drawing a **blueprint** of an app from a PRD, a spec or a description of what you want to build. Open the folder you'll build it in (an empty one is fine), share the document, and ask:
+
+> Here's my PRD. Make me a floorplan of what we'd need to build.
+
+You get a **blueprint**: the same map, with every part, file, endpoint and screen the app would need, how they connect, and the outside services they rely on. Its cards have dashed outlines so you can tell it's a plan. The reply names the stack Claude or Codex chose, what it assumed, and the questions your PRD leaves open.
+
+On the map:
+- **Review** lists what the plan still has to decide, like endpoints anyone could use or open questions. **Resolve on the map** settles one: for a question, you just type your answer.
+- Switch the Ask bar to **Change** to shape the plan ("also plan out refunds"). The map redraws with what changed highlighted, and **Undo** puts it back.
+- Each part has **Build this with Claude** (or Codex), a ready request to build just that part.
+
+Once the code exists, ask Claude or Codex to "map the real code now", and the blueprint becomes a normal map. See [Blueprints](how-it-works.md#blueprints) for how it works.
+
 ## Open the map yourself
 
 The map is a folder in your project. Either:

@@ -25,6 +25,17 @@ if (!fs.existsSync(graphFile) || !fs.existsSync(archFile)) {
 const old = JSON.parse(fs.readFileSync(graphFile, 'utf8'));
 const arch = JSON.parse(fs.readFileSync(archFile, 'utf8'));
 
+// A blueprint is redrawn from plan.json, not from code. --from-code maps the real code instead
+// (plan.json is kept, so the blueprint can be drawn again with plan.mjs + build.mjs).
+if (old.meta?.blueprint && !args['from-code']) {
+  const run = (script, ...rest) => execFileSync(process.execPath, [path.join(HERE, script), root, ...rest], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
+  try {
+    process.stdout.write(run('plan.mjs') + '\n' + run('build.mjs', ...process.argv.slice(2).filter((a) => a.startsWith('--'))));
+  } catch (e) { process.stdout.write(String(e.stdout || '')); process.exit(1); }
+  console.log('\nNEXT  This map is a blueprint, redrawn from floorplan/plan.json. Edit plan.json and architecture.json to change the plan. Once the code exists, run refresh.mjs --from-code for a map of the real code; plan.json stays.');
+  process.exit(0);
+}
+
 // ---------- 1. re-scan (no tokens) ----------
 const node = process.execPath;
 execFileSync(node, [path.join(HERE, 'scan.mjs'), root], { stdio: ['ignore', 'ignore', 'inherit'] });

@@ -20,6 +20,15 @@ test('globs: ** spans folders, * stays in one, braces and bare folders work', ()
   assert.ok(g('./src/', 'src/a.ts'), 'leading ./ and trailing / are ignored');
 });
 
+test('globs: a bracketed folder name ([id], [...slug]) is a folder, not a character class', () => {
+  const g = (glob, p) => compileGlob(glob).test(p);
+  assert.ok(g('app/orders/[id]/**', 'app/orders/[id]/page.tsx'));
+  assert.ok(!g('app/orders/[id]/**', 'app/orders/i/page.tsx'));
+  assert.ok(g('app/[...slug]', 'app/[...slug]/page.tsx'));
+  assert.ok(g('app/[[...slug]]/page.tsx', 'app/[[...slug]]/page.tsx'));
+  assert.ok(g('src/file[12].ts', 'src/file2.ts'), 'inside a name, brackets still match one character');
+});
+
 test('globs: a more specific pattern scores higher', () => {
   assert.ok(compileGlob('api/routes/**').specificity > compileGlob('api/**').specificity);
 });

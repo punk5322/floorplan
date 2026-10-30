@@ -22,6 +22,17 @@ function mountTarget(f, mount) {
     const imp = imports.find((i) => i.locals && Object.hasOwn(i.locals, head));
     return { file: imp ? imp.files[0] : f.path, v: '*' };
   }
+  // First the import that binds the mounted name in this file: `from app.routes import campaigns as
+  // campaign_routes` binds campaign_routes (not campaigns), and wins over `from app.platform import pricing`
+  // whose module merely ends in a router's name (platform).
+  const bound = imports.find((imp) => imp.from
+    ? Object.hasOwn(imp.aliases || {}, head) || (imp.names?.includes(head) && !Object.values(imp.aliases || {}).includes(head))
+    : (imp.alias || imp.spec?.split('.')[0]) === head);
+  if (bound && (attr || bound.from)) {
+    const orig = bound.aliases?.[head] || head;
+    const file = (bound.from && bound.files.length > 1 && bound.files[bound.names.indexOf(orig)]) || bound.files[0];
+    return { file, v: attr || orig };
+  }
   for (const imp of imports) {
     if (attr && (imp.alias === head || imp.spec?.split('.').pop() === head || imp.names?.includes(head))) {
       return { file: imp.files[imp.names?.indexOf(head) ?? 0] || imp.files[0], v: attr };

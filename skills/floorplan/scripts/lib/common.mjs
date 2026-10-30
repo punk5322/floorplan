@@ -33,6 +33,12 @@ export function globToRegExp(glob) {
     if (c === '{') { braces++; re += '(?:'; i++; continue; }
     if (c === '}' && braces) { braces--; re += ')'; i++; continue; }
     if (c === ',' && braces) { re += '|'; i++; continue; }
+    // a whole segment like [id], [...slug] or [[...slug]] is a folder name (Next.js, SvelteKit), not a character class
+    if (c === '[' && (i === 0 || g[i - 1] === '/')) {
+      const end = g.indexOf('/', i) < 0 ? g.length : g.indexOf('/', i);
+      const seg = g.slice(i, end);
+      if (/^\[\[?(\.\.\.)?[A-Za-z_$][\w$-]*\]\]?$/.test(seg)) { re += seg.replace(/[.[\]$]/g, '\\$&'); i = end; continue; }
+    }
     if (c === '[') {
       const j = g.indexOf(']', i + 1);
       if (j > i) { re += '[' + g.slice(i + 1, j).replace(/^!/, '^').replace(/\\/g, '\\\\') + ']'; i = j + 1; continue; }
@@ -94,7 +100,7 @@ export const HARD_IGNORE_DIRS = new Set([
 export const MAP_DIR = 'floorplan';
 export const LEGACY_MAP_DIR = 'show-code';
 /** True for a folder holding a map, so a project's own folder that happens to be called "floorplan" isn't taken for one. */
-export const isMapDir = (d) => ['architecture.json', 'graph.json', '.cache'].some((f) => fs.existsSync(path.join(d, f)));
+export const isMapDir = (d) => ['architecture.json', 'plan.json', 'graph.json', '.cache'].some((f) => fs.existsSync(path.join(d, f)));
 /**
  * Keeps the map folder out of git: its own .gitignore ignores everything in it, itself included, so
  * nothing in the project's tracked files changes. Returns a warning when git already tracks files

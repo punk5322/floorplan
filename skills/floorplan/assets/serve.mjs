@@ -5,6 +5,7 @@
 // usage: node floorplan/serve.mjs [--port 4378] [--engine claude|codex] [--model <model>] [--claude <path>] [--codex <path>]
 //                                 [--no-open] [--idle-exit <minutes>]
 //        node floorplan/serve.mjs --stop
+//        node floorplan/serve.mjs --export [<file>] [--include flows,notes,recent,health]   (a copy to share; default flows,notes)
 //
 // The server listens on 127.0.0.1 only. Each question runs in the codebase root, on your own account:
 // `claude -p` with read-only tools (Read, Grep, Glob, and Bash limited to floorplan/query.mjs), or
@@ -32,6 +33,55 @@ if (has('stop')) {
   console.log(stopped ? `Stopped the map server (${s.url}).` : 'The map server was not running.');
   process.exit(0);
 }
+
+// ---------- export: a copy of the map to share ----------
+// The same self-contained page, marked as exported: no Ask bar, no requests for Claude or Codex, no links into
+// this computer, and only the extras asked for. Used by the map's Export button and by --export.
+const EXPORT_PARTS = ['flows', 'notes', 'recent', 'health'];
+const EXPORT_DEFAULT = ['flows', 'notes'];
+const DATA_START = '<script>window.FLOORPLAN = ';
+function exportMap(include, extraFlows = []) {
+  const html = fs.readFileSync(path.join(here, 'index.html'), 'utf8');
+  const a = html.indexOf(DATA_START), b = html.indexOf(';</script>', a);
+  if (a < 0 || b < 0) throw new Error('This map is too old to export. Ask Claude or Codex to update the floorplan first.');
+  const g = JSON.parse(html.slice(a + DATA_START.length, b));
+  const on = EXPORT_PARTS.filter((p) => include.includes(p));
+  const out = {
+    ...g,
+    // the remote can carry a sign-in token; the folder path is this computer's
+    meta: { ...g.meta, root: null, repos: (g.meta.repos || []).map(({ remote, ...r }) => r), exported: { at: new Date().toISOString(), include: on } },
+    flows: on.includes('flows') ? [...g.flows, ...extraFlows.filter((f) => !g.flows.some((x) => x.id === f.id))] : [],
+    tour: on.includes('flows') ? g.tour : [],
+    files: on.includes('notes') ? g.files : g.files.map(({ note, ...f }) => f),
+  };
+  if (!on.includes('recent')) delete out.recent;
+  if (!on.includes('health')) delete out.health;
+  const json = JSON.stringify(out).replace(/<\/(script)/gi, '<\\/$1').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+  const slug = String(g.project?.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'floorplan';
+  return { html: html.slice(0, a + DATA_START.length) + json + html.slice(b), name: `${slug}-map.html`, include: on, plan: !!g.meta?.blueprint };
+}
+/** Flows requested from the map since it was last built, as the page sends them: checked and trimmed. */
+const cleanFlows = (list) => (Array.isArray(list) ? list : []).slice(0, 50)
+  .filter((f) => f && typeof f.id === 'string' && Array.isArray(f.steps))
+  .map((f) => ({
+    id: f.id.slice(0, 100), title: String(f.title || 'Flow').slice(0, 200), description: String(f.description || '').slice(0, 1000), custom: true,
+    steps: f.steps.slice(0, 60).filter((s) => s && typeof s.ref === 'string').map((s) => ({ ref: s.ref.slice(0, 300), note: String(s.note || '').slice(0, 2000) })),
+  }))
+  .filter((f) => f.steps.length >= 2);
+if (has('export')) {
+  const dest = opt('export');
+  const include = String(opt('include', EXPORT_DEFAULT.join(','))).split(',').map((s) => s.trim().toLowerCase());
+  try {
+    const x = exportMap(include);
+    const file = path.resolve(dest && !dest.startsWith('--') ? dest : path.join(here, x.name));
+    fs.writeFileSync(file, x.html);
+    console.log(`Exported the map to ${file}`);
+    const label = { flows: 'flows and the tour', notes: 'notes', recent: 'recent work', health: x.plan ? 'the design review' : 'the health check' };
+    console.log(`Includes: the map${x.include.map((p) => ', ' + label[p]).join('')}. One file that opens in any browser, with no Ask bar.`);
+    if (x.include.includes('health') && !x.plan) console.log('It includes the health check: which endpoints are open and where secrets sit in the code (never their values). Share it only with people you trust.');
+    process.exit(0);
+  } catch (e) { console.error(`✗ Couldn't export the map: ${e.message}`); process.exit(1); }
+}
 const wantPort = Number(opt('port', 4378));
 const idleExit = Number(opt('idle-exit', 0)) * 60000; // stop this long after the last tab closes (0 = never)
 const selfHash = crypto.createHash('sha1').update(fs.readFileSync(fileURLToPath(import.meta.url))).digest('hex').slice(0, 12);
@@ -56,7 +106,10 @@ function resolveCli(candidates, npmEntry) {
       const cli = path.join(path.dirname(c), 'node_modules', ...npmEntry);
       if (fs.existsSync(cli)) return { cmd: process.execPath, args: [cli], path: c };
       const exe = c.replace(/\.(cmd|bat|ps1)$/i, '.exe');
-      if (fs.existsSync(exe)) return { cmd: exe, args: [], path: exe };
+      if (exe !== c && fs.existsSync(exe)) return { cmd: exe, args: [], path: exe };
+      // newer npm installs ship a real program inside the package (bin/claude.exe) and no JS entry point; the shim beside it can't be spawned
+      const pkgExe = path.join(path.dirname(c), 'node_modules', ...npmEntry.slice(0, 2), 'bin', path.basename(c).replace(/\.[^.]*$/, '') + '.exe');
+      if (fs.existsSync(pkgExe)) return { cmd: pkgExe, args: [], path: pkgExe };
       continue;
     }
     return { cmd: c, args: [], path: c };
@@ -75,22 +128,34 @@ function codexApp() {
       .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
   } catch { return []; }
 }
+// The agents that can answer, one entry each: what it's called, where to get it, how to find its CLI, how to
+// run one request (run, below), and whether its answers are held to a schema (structured). Changing a
+// blueprint from the map needs that, so Change is offered only with a structured engine. schemaFile: the
+// CLI reads its schema from a file rather than the command line.
 const ENGINES = {
-  claude: () => resolveCli(given('claude') || [
-    ...which('claude'),
-    path.join(HOME, '.local', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude'),
-    ...(process.platform === 'win32' ? [path.join(process.env.APPDATA || '', 'npm', 'claude.cmd')] : []),
-  ], ['@anthropic-ai', 'claude-code', 'cli.js']),
-  codex: () => resolveCli(given('codex') || [...which('codex'), ...codexApp()], ['@openai', 'codex', 'bin', 'codex.js']),
+  claude: {
+    name: 'Claude Code CLI', site: 'https://docs.claude.com/en/docs/claude-code', structured: true,
+    find: () => resolveCli(given('claude') || [
+      ...which('claude'),
+      path.join(HOME, '.local', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude'),
+      ...(process.platform === 'win32' ? [path.join(process.env.APPDATA || '', 'npm', 'claude.cmd')] : []),
+    ], ['@anthropic-ai', 'claude-code', 'cli.js']),
+    run: claudeRun,
+  },
+  codex: {
+    name: 'Codex', site: 'https://developers.openai.com/codex', structured: true, schemaFile: true,
+    find: () => resolveCli(given('codex') || [...which('codex'), ...codexApp()], ['@openai', 'codex', 'bin', 'codex.js']),
+    run: codexRun,
+  },
 };
-// --engine (or FLOORPLAN_ENGINE) decides; otherwise the agent that built the map, then the other one
+// --engine (or FLOORPLAN_ENGINE) decides; otherwise the agent that built the map, then the others in order
 const builtBy = (() => { try { return JSON.parse(fs.readFileSync(path.join(here, 'graph.json'), 'utf8')).meta?.agent; } catch { return null; } })();
 const asked = opt('engine', process.env.FLOORPLAN_ENGINE);
 const isEngine = (k) => typeof k === 'string' && Object.hasOwn(ENGINES, k);
 const want = isEngine(asked) ? asked : isEngine(builtBy) ? builtBy : 'claude';
 let engine = null, cli = null;
-for (const k of isEngine(asked) ? [asked] : [want, ...Object.keys(ENGINES).filter((k) => k !== want)]) { cli = ENGINES[k](); if (cli) { engine = k; break; } }
-const NAME = { claude: 'Claude Code CLI', codex: 'Codex' };
+for (const k of isEngine(asked) ? [asked] : [want, ...Object.keys(ENGINES).filter((k) => k !== want)]) { cli = ENGINES[k].find(); if (cli) { engine = k; break; } }
+const canChange = !engine || ENGINES[engine].structured;
 // Started from inside a Claude Code or Codex session? Don't let the CLI think it's nested in it.
 function cliEnv() {
   const env = { ...process.env };
@@ -102,22 +167,24 @@ if (cli) { try { version = execFileSync(cli.cmd, [...cli.args, '--version'], { e
 
 // The page, the graph, and the instructions and answer schema (from query.mjs's inlined graph-query
 // code). Loaded at start and again whenever the map is rebuilt.
-const inject = `<script>window.FLOORPLAN_SERVER=${JSON.stringify({ token, cli: !!cli, engine, want, version, model: model || null })};</script>`;
+const inject = `<script>window.FLOORPLAN_SERVER=${JSON.stringify({ token, cli: !!cli, engine, want, version, model: model || null, change: canChange })};</script>`;
 let page, G, core, MODES;
 function load() {
   const html = fs.readFileSync(path.join(here, 'index.html'), 'utf8');
   const g = JSON.parse(fs.readFileSync(path.join(here, 'graph.json'), 'utf8'));
   const coreSrc = fs.readFileSync(path.join(here, 'query.mjs'), 'utf8').split('// ---- cli ----')[0];
-  const c = new Function(`${coreSrc.replace(/^import .*$/gm, '')}; return { FLOORPLAN_ANSWER_SCHEMA, FLOORPLAN_FLOW_SCHEMA, floorplanAskInstructions, floorplanFlowInstructions, createGraphQuery };`)();
+  const c = new Function(`${coreSrc.replace(/^import .*$/gm, '')}; return { FLOORPLAN_ANSWER_SCHEMA, FLOORPLAN_FLOW_SCHEMA, FLOORPLAN_CHANGE_SCHEMA, floorplanAskInstructions, floorplanFlowInstructions, floorplanChangeInstructions, createGraphQuery };`)();
   c.q = c.createGraphQuery(g);
   page = html.replace('</head>', inject + '</head>');
   G = g; core = c;
-  // two kinds of request: a question (answer + board) or a new guided flow. Codex reads its schema from a file.
+  // kinds of request: a question (answer + board), a new guided flow, and for a blueprint, a change to the
+  // plan. Codex reads its schema from a file.
   MODES = {
     ask: { instructions: core.floorplanAskInstructions(G, 'cli'), schema: core.FLOORPLAN_ANSWER_SCHEMA, file: path.join(here, '.cache', 'answer-schema.json') },
     flow: { instructions: core.floorplanFlowInstructions(G, 'cli'), schema: core.FLOORPLAN_FLOW_SCHEMA, file: path.join(here, '.cache', 'flow-schema.json') },
+    ...(G.meta?.blueprint && canChange ? { change: { instructions: core.floorplanChangeInstructions(G), schema: core.FLOORPLAN_CHANGE_SCHEMA, file: path.join(here, '.cache', 'change-schema.json') } } : {}),
   };
-  if (engine === 'codex') {
+  if (ENGINES[engine]?.schemaFile) {
     fs.mkdirSync(path.join(here, '.cache'), { recursive: true });
     for (const m of Object.values(MODES)) fs.writeFileSync(m.file, JSON.stringify(strict(m.schema)));
   }
@@ -222,7 +289,8 @@ function describeCommand(command) {
 }
 function describeTool(name, input = {}) {
   if (name === 'Bash') return describeCommand(input.command);
-  if (name === 'Read') return `Reading ${rel(input.file_path)}`;
+  // a long result the CLI saved to read back in parts lives outside the project
+  if (name === 'Read') return /[\\/]tool-results[\\/]/.test(input.file_path || '') ? 'Reading the rest of a long file' : `Reading ${rel(input.file_path)}`;
   if (name === 'Grep') return `Searching code for "${input.pattern}"`;
   if (name === 'Glob') return `Listing ${input.pattern}`;
   return name;
@@ -282,46 +350,166 @@ function codexRun(body, mode) {
     lastError: () => error,
   };
 }
+const CLOSED = Symbol('closed'); // the browser went away mid-request
+/** Runs the agent once for a request and resolves with its answer, streaming progress through `send`. */
+function runAgent(res, send, body) {
+  return new Promise((resolve, reject) => {
+    const run = ENGINES[engine].run(body, MODES[body.mode] || MODES.ask);
+    const child = spawn(cli.cmd, run.args, { cwd: root, env: cliEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const id = crypto.randomBytes(6).toString('hex');
+    running.set(id, child);
+    send('start', { id });
+    child.stdin.end(run.input);
+    let buf = '', stderr = '', done = false;
+    // working out and writing a whole updated plan has long stretches with nothing to report: say so after a quiet spell
+    let quiet = null, said = '';
+    const say = (text) => { if (!done && text !== said) { said = text; send('progress', { text }); } };
+    const hush = () => { clearTimeout(quiet); if (body.mode === 'change' && !done) quiet = setTimeout(() => say('Working on the updated plan'), 12000); };
+    const out = {
+      progress: (text) => { if (!done) { say(text); hush(); } },
+      answer: (data) => { if (!done) { done = true; clearTimeout(quiet); resolve(data); } },
+      fail: (message) => { if (!done) { done = true; clearTimeout(quiet); reject(new Error(message)); } },
+    };
+    hush();
+    child.stdout.on('data', (d) => {
+      buf += d;
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if (!line) continue;
+        let ev; try { ev = JSON.parse(line); } catch { continue; }
+        run.onEvent(ev, out);
+      }
+    });
+    child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
+    child.on('error', (e) => out.fail(e.message));
+    child.on('close', (code) => {
+      running.delete(id);
+      out.fail(run.lastError?.() || stderr.trim() || `${engine} exited with code ${code}`);
+    });
+    // the browser went away (closed tab, Stop): don't leave the CLI working. Note req 'close' fires as soon as
+    // the body is read, so watch the response instead.
+    res.on('close', () => { if (!done) { done = true; clearTimeout(quiet); child.kill(); reject(CLOSED); } });
+  });
+}
 function ask(req, res, body) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
-  const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  if (!cli) { send('failure', { code: 'cli_missing', message: `${NAME[want]} not found.` }); return res.end(); }
-  const run = (engine === 'codex' ? codexRun : claudeRun)(body, MODES[body.mode] || MODES.ask);
-  const child = spawn(cli.cmd, run.args, { cwd: root, env: cliEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-  const id = crypto.randomBytes(6).toString('hex');
-  running.set(id, child);
-  send('start', { id });
-  child.stdin.end(run.input);
-  let buf = '', stderr = '', done = false;
-  const out = {
-    progress: (text) => { if (!done) send('progress', { text }); },
-    answer: (data) => { if (!done) { done = true; send('answer', data); } },
-    fail: (message) => { if (!done) { done = true; send('failure', { code: failCode(message), message }); } },
-  };
-  child.stdout.on('data', (d) => {
-    buf += d;
-    let nl;
-    while ((nl = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
-      if (!line) continue;
-      let ev; try { ev = JSON.parse(line); } catch { continue; }
-      run.onEvent(ev, out);
+  const send = (event, data) => { if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+  if (!cli) { send('failure', { code: 'cli_missing', message: `${ENGINES[want].name} not found.` }); return res.end(); }
+  if (body.mode === 'change') return changePlan(res, send, body);
+  runAgent(res, send, body)
+    .then((a) => send('answer', a), (e) => { if (e !== CLOSED) send('failure', { code: failCode(e.message), message: e.message }); })
+    .finally(() => res.end());
+}
+
+// ---------- changing a blueprint from the map ----------
+// The agent stays read-only: it returns the whole updated plan.json and architecture.json, and this server
+// checks them with the skill's plan.mjs and build.mjs (build.mjs records where they are), saves them and
+// redraws the map, which reloads every open tab. Each change keeps the files it replaced, for Undo.
+const historyDir = path.join(here, '.cache', 'history');
+const PLAN_FILES = ['plan.json', 'architecture.json', 'recent-work.json'];
+let changing = false;
+function snapshot() {
+  const dir = path.join(historyDir, Date.now().toString(36));
+  fs.mkdirSync(dir, { recursive: true });
+  for (const f of PLAN_FILES) if (fs.existsSync(path.join(here, f))) fs.copyFileSync(path.join(here, f), path.join(dir, f));
+  for (const old of fs.readdirSync(historyDir).sort().slice(0, -20)) fs.rmSync(path.join(historyDir, old), { recursive: true, force: true });
+  return dir;
+}
+function restore(dir) {
+  for (const f of PLAN_FILES) { const from = path.join(dir, f), to = path.join(here, f); if (fs.existsSync(from)) fs.copyFileSync(from, to); else fs.rmSync(to, { force: true }); }
+}
+/** Runs one of the skill's scripts on this project; throws with its output when it fails. */
+function skillScript(name, ...args) {
+  let dir;
+  try { dir = JSON.parse(fs.readFileSync(path.join(here, '.cache', 'skill.json'), 'utf8')).dir; } catch {}
+  if (!dir || !fs.existsSync(path.join(dir, 'scripts', name))) throw new Error('This map’s server can’t find the Floorplan scripts. Ask Claude Code or Codex to update the floorplan once, then try again.');
+  try { return execFileSync(process.execPath, [path.join(dir, 'scripts', name), root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 120000 }); }
+  catch (e) { throw Object.assign(new Error(String(e.stdout || '') + String(e.stderr || '') || e.message), { checks: true }); }
+}
+/** The "  - …" lines under the scripts' "✗ N error(s)" heading (warnings follow under "!"). */
+function problems(text) {
+  const out = [];
+  let inErrors = false;
+  for (const l of String(text || '').split('\n')) {
+    if (/^✗/.test(l)) inErrors = true;
+    else if (/^\S/.test(l)) inErrors = false;
+    else if (inErrors && /^\s+- /.test(l)) out.push(l.trim().slice(2));
+  }
+  return out;
+}
+/** Checks and saves an updated plan. Returns { ok, undo } or { errors } with nothing changed. */
+function applyChange(data, request, lastTry) {
+  const parse = (name, text) => { try { const v = JSON.parse(String(text || '')); return v && typeof v === 'object' && !Array.isArray(v) ? v : null; } catch { return null; } };
+  const plan = parse('plan', data.plan), arch = parse('architecture', data.architecture);
+  if (!plan || !arch) return { errors: [`${!plan ? 'plan' : 'architecture'} isn't a complete JSON object`] };
+  const snap = snapshot();
+  const write = (f, v) => fs.writeFileSync(path.join(here, f), JSON.stringify(v, null, 2) + '\n');
+  try {
+    write('plan.json', plan);
+    write('architecture.json', arch);
+    const items = (Array.isArray(data.changes) ? data.changes : []).filter((c) => c && typeof c.ref === 'string').map((c) => ({ ref: c.ref, change: c.change === 'changed' ? 'changed' : 'new', note: String(c.note || '') }));
+    // the Recent work panel shows plain text: the summary's first paragraph, without Markdown marks
+    const plain = String(data.summary || '').split(/\n\s*\n/)[0].replace(/\*\*|__|`/g, '').replace(/\s+/g, ' ').trim();
+    write('recent-work.json', { updatedAt: new Date().toISOString(), tasks: [{ title: String(data.title || 'Changed the plan').slice(0, 80), request, summary: plain, status: 'planned, not built', items }] });
+    skillScript('plan.mjs');
+    const check = skillScript('build.mjs', '--check');
+    const unassigned = +(/(\d+) unassigned/.exec(check)?.[1] || 0);
+    if (unassigned && !lastTry) throw Object.assign(new Error(''), { checks: true, list: [`${unassigned} planned file(s) fall under no node's paths in architecture.json (add or widen globs)`] });
+    skillScript('build.mjs', '--no-claude-md');
+    return { ok: true, undo: path.basename(snap) };
+  } catch (e) {
+    restore(snap);
+    fs.rmSync(snap, { recursive: true, force: true });
+    try { skillScript('plan.mjs'); } catch {}
+    if (!e.checks) throw e;
+    return { errors: e.list || problems(e.message).slice(0, 12).concat(problems(e.message).length ? [] : [e.message.trim().split('\n').pop()]) };
+  }
+}
+async function changePlan(res, send, body) {
+  const request = String(body.question || '').slice(0, 4000);
+  if (!MODES.change) { send('failure', { code: 'cli_error', message: G.meta?.blueprint ? `${ENGINES[engine].name} can't change a plan from the map.` : 'Only a blueprint can be changed from the map.' }); return res.end(); }
+  if (changing) { send('failure', { code: 'busy', message: 'Another change to this plan is still being made. Try again when it’s done.' }); return res.end(); }
+  changing = true;
+  let session, errors = null;
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const question = errors
+        ? `Your updated plan didn't pass the checks, so nothing was saved:\n${errors.map((e) => `- ${e}`).join('\n')}\n\nFix these and reply again with the complete files. The request was: ${request}`
+        : request;
+      const data = await runAgent(res, send, { question, session, mode: 'change' });
+      session = data.session || session;
+      send('progress', { text: 'Checking the updated plan' });
+      const r = applyChange(data, request, attempt === 1);
+      if (r.ok) {
+        console.log(`plan changed: ${data.title || request.slice(0, 60)}`);
+        send('answer', { title: String(data.title || ''), summary: String(data.summary || ''), changes: (data.changes || []).length, followups: Array.isArray(data.followups) ? data.followups.map(String).slice(0, 3) : [], undo: r.undo });
+        return;
+      }
+      errors = r.errors;
+      send('progress', { text: `Fixing ${errors.length === 1 ? 'a problem' : `${errors.length} problems`} the checks found` });
     }
-  });
-  child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
-  child.on('error', (e) => { out.fail(e.message); res.end(); });
-  child.on('close', (code) => {
-    running.delete(id);
-    out.fail(run.lastError?.() || stderr.trim() || `${engine} exited with code ${code}`);
-    res.end();
-  });
-  // the browser went away (closed tab, Stop): don't leave the CLI working. Note req 'close' fires as soon as
-  // the body is read, so watch the response instead.
-  res.on('close', () => { if (!done) child.kill(); });
+    send('failure', { code: 'change_invalid', message: `The updated plan didn't pass the checks, so nothing changed:\n${errors.slice(0, 6).map((e) => `- ${e}`).join('\n')}` });
+  } catch (e) {
+    if (e !== CLOSED) send('failure', { code: failCode(String(e.message || e)), message: String(e.message || e) });
+  } finally { changing = false; res.end(); }
+}
+/** Puts back the files a change replaced (the newest first), and redraws. */
+function undoChange() {
+  const all = fs.existsSync(historyDir) ? fs.readdirSync(historyDir).sort() : [];
+  if (!all.length) return { ok: false, error: 'Nothing to undo.' };
+  const dir = path.join(historyDir, all[all.length - 1]);
+  restore(dir);
+  try { skillScript('plan.mjs'); skillScript('build.mjs', '--no-claude-md'); } catch (e) { return { ok: false, error: String(e.message || e).slice(0, 500) }; }
+  fs.rmSync(dir, { recursive: true, force: true });
+  return { ok: true, left: all.length - 1 };
 }
 
 // ---------- http ----------
 const server = http.createServer((req, res) => {
+  // only this machine's own names: a website that points its domain at 127.0.0.1 (DNS rebinding) would
+  // otherwise count as the same origin as the map, and could read its token from the page
+  if (![`127.0.0.1:${port}`, `localhost:${port}`].includes(String(req.headers.host || '').toLowerCase())) { res.writeHead(403); return res.end('unknown host'); }
   const url = new URL(req.url, `http://${req.headers.host}`);
   const sameOrigin = !req.headers.origin || req.headers.origin === `http://${req.headers.host}`;
   if (url.pathname.startsWith('/api/')) {
@@ -373,7 +561,24 @@ const server = http.createServer((req, res) => {
         return;
       }
     }
+    if (req.method === 'POST' && url.pathname === '/api/plan/undo') {
+      const r = changing ? { ok: false, error: 'A change is still being made.' } : undoChange();
+      res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(r));
+    }
     if (req.method === 'POST' && url.pathname === '/api/cancel') { for (const c of running.values()) c.kill(); res.writeHead(204); return res.end(); }
+    if (req.method === 'POST' && url.pathname === '/api/export') {
+      let raw = '';
+      req.on('data', (d) => { raw += d; if (raw.length > 500000) req.destroy(); });
+      req.on('end', () => {
+        let body = {}; try { body = JSON.parse(raw); } catch {}
+        try {
+          const x = exportMap(Array.isArray(body.include) ? body.include.map(String) : EXPORT_DEFAULT, cleanFlows(body.flows));
+          res.writeHead(200, { 'Content-Type': TYPES['.html'], 'Content-Disposition': `attachment; filename="${x.name}"`, 'Cache-Control': 'no-store' });
+          res.end(x.html);
+        } catch (e) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message })); }
+      });
+      return;
+    }
     if (req.method === 'POST' && url.pathname === '/api/ask') {
       let raw = '';
       req.on('data', (d) => { raw += d; if (raw.length > 20000) req.destroy(); });
@@ -409,8 +614,8 @@ server.on('listening', () => {
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => process.exit(0));
   console.log(`Floorplan: ${u}`);
   console.log(cli
-    ? `asking via ${NAME[engine]} ${version || ''} (${cli.path})${model ? `, model ${model}` : ''}`
-    : `${NAME[want]} not found: the map works, but asking questions needs it (${want === 'codex' ? 'https://developers.openai.com/codex' : 'https://docs.claude.com/en/docs/claude-code'}). Pass --${want} <path> if it is installed somewhere unusual.`);
+    ? `asking via ${ENGINES[engine].name} ${version || ''} (${cli.path})${model ? `, model ${model}` : ''}`
+    : `${ENGINES[want].name} not found: the map works, but asking questions needs it (${ENGINES[want].site}). Pass --${want} <path> if it is installed somewhere unusual.`);
   if (!has('no-open')) {
     const opener = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', u]] : process.platform === 'darwin' ? ['open', [u]] : ['xdg-open', [u]];
     try { spawn(opener[0], opener[1], { stdio: 'ignore', detached: true }).unref(); } catch {}
