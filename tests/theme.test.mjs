@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
-import { shopApp, scanAndBuild, cleanup } from './helpers.mjs';
+import { SKILL, shopApp, scanAndBuild, cleanup } from './helpers.mjs';
 
 let root, html;
 before(() => { root = shopApp(); scanAndBuild(root); html = fs.readFileSync(path.join(root, 'floorplan', 'index.html'), 'utf8'); });
@@ -104,4 +104,23 @@ test('in Light, text on the red and amber Health chip is readable (4.5:1 or bett
 
 test("the search box gives up the Theme button's room so the project name and buttons fit as before", () => {
   assert.match(html, /@media \(min-width: 701px\) \{ #search-btn \{ width: min\(460px, max\(calc\(36vw - 48px\), 250px\)\); \} \}/);
+});
+
+test('every style in the viewer and its extensions paints with theme variables, never fixed colours', () => {
+  // the two :root blocks define the colours; everywhere else uses var(--…) or rgba(var(--ink), …)
+  const viewer = fs.readFileSync(path.join(SKILL, 'assets', 'viewer.html'), 'utf8')
+    .replace(/\n:root \{[\s\S]*?\n\}/, '').replace(/:root\[data-theme="light"\] \{[\s\S]*?\n\}/, '');
+  const dir = path.join(SKILL, 'assets', 'ui');
+  const sources = [['viewer.html', viewer], ...fs.readdirSync(dir).map((n) => [`ui/${n}`, fs.readFileSync(path.join(dir, n), 'utf8')])];
+  for (const [name, text] of sources) {
+    const fixed = text.match(/#[0-9a-f]{6}\b|#[0-9a-f]{3}\b(?!-)|\brgba?\(\s*\d/gi) || [];
+    assert.deepEqual(fixed, [], `${name} paints with fixed colours`);
+  }
+});
+
+test('MCP tools have their own colour in both themes, and the Endpoints list uses theme variables', () => {
+  assert.match(html, /\n:root \{[^}]*--m-TOOL: #/);
+  assert.match(html, /:root\[data-theme="light"\] \{[^}]*--m-TOOL: #/);
+  assert.match(html, /\/\* ui\/35-endpoints\.js \*\//);
+  assert.match(html, /#ep-menu \.ep-host \{[^}]*background: var\(--k-http\)/);
 });

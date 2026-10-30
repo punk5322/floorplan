@@ -58,7 +58,7 @@
   --n-ui: #7cc4ff; --n-service: #b49cff; --n-worker: #f0c36b; --n-library: #6fd7a8; --n-feature: #8fb4ff; --n-data: #63d2b8; --n-config: #a3a3a3;
   --n-test: #f19ac7; --n-script: #f5a66b; --n-infra: #f28b8b; --n-external: #e3a6f0; --n-misc: #8b8b8b; --n-dir: #a3a3a3; --n-file: #a3a3a3;
   --n-module: #a3a3a3; --n-symbol: #c7b8ff; --n-route: #7aa7ff; --n-connector: #8b8b8b;
-  --m-GET: #6fd7a8; --m-POST: #7aa7ff; --m-PUT: #f0c36b; --m-PATCH: #c7a3ff; --m-DELETE: #f28b8b; --m-CALL: #6fcfd9; --m-ANY: #a3a3a3;
+  --m-GET: #6fd7a8; --m-POST: #7aa7ff; --m-PUT: #f0c36b; --m-PATCH: #c7a3ff; --m-DELETE: #f28b8b; --m-CALL: #6fcfd9; --m-TOOL: #f5a66b; --m-ANY: #a3a3a3;
   --panel-w: 360px; --pw: calc(var(--panel-w) + 32px); --gutter: 28px;
   color-scheme: dark;
 }
@@ -86,7 +86,7 @@
   --n-ui: #1f7ac4; --n-service: #7a5ad8; --n-worker: #a8710c; --n-library: #1a8a5b; --n-feature: #3b6fd1; --n-data: #0f8a76; --n-config: #666666;
   --n-test: #c43c86; --n-script: #c06a1d; --n-infra: #c94a4a; --n-external: #a24dbb; --n-misc: #666666; --n-dir: #666666; --n-file: #666666;
   --n-module: #666666; --n-symbol: #6a55c4; --n-route: #2f6fe0; --n-connector: #666666;
-  --m-GET: #1a8a5b; --m-POST: #2f6fe0; --m-PUT: #a8710c; --m-PATCH: #7a4fd0; --m-DELETE: #c94a4a; --m-CALL: #0d7f8c; --m-ANY: #666666;
+  --m-GET: #1a8a5b; --m-POST: #2f6fe0; --m-PUT: #a8710c; --m-PATCH: #7a4fd0; --m-DELETE: #c94a4a; --m-CALL: #0d7f8c; --m-TOOL: #b0560c; --m-ANY: #666666;
 }
 :root[data-theme="light"] .mark { filter: invert(1); } /* the logo image is white, so it is inverted to black */
 :root[data-theme="light"] #search::placeholder { color: var(--text-3); } /* the browser's default grey is too faint on white */
@@ -541,7 +541,9 @@ const KIND_PLAIN = { contains: 'Contains', import: 'Uses', http: 'Web requests',
 const KIND_LABEL = new Proxy({}, { get: (_, k) => (technical() ? KIND_TECH : KIND_PLAIN)[k] || k });
 let technicalFlag = false;
 const technical = () => technicalFlag;
-const METHODS = { GET: 1, POST: 1, PUT: 1, PATCH: 1, DELETE: 1, CALL: 1 };
+const METHODS = { GET: 1, POST: 1, PUT: 1, PATCH: 1, DELETE: 1, CALL: 1, TOOL: 1 };
+// an endpoint's kind, in words: a web address, or a tool an AI agent calls through an MCP server
+const endpointKind = (r) => (r.m === 'TOOL' ? 'MCP tool' : 'endpoint');
 const store = { get(k, d) { try { return JSON.parse(localStorage.getItem('floorplan:' + k) ?? localStorage.getItem('show-code:' + k)) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem('floorplan:' + k, JSON.stringify(v)); } catch {} } };
 const h = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const fmt = (n) => n >= 10000 ? Math.round(n / 1000) + 'k' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
@@ -826,7 +828,7 @@ function cardFoot(item) {
   if (i.type === 'node' && i.n.kind !== 'external') { const sub = (kids.get(item) || []).filter((k) => k.startsWith('n:')).length; size = sub ? plural(sub, 'module') : plural(statsOf(item).files, 'file'); }
   else if (i.type === 'dir') size = plural(statsOf(item).files, 'file');
   else if (i.type === 'module') size = 'this file';
-  else if (i.type === 'file') { const nr = (routesByFile.get(i.f.p) || []).length; size = nr ? plural(nr, 'endpoint') : ''; }
+  else if (i.type === 'file') { const rs = routesByFile.get(i.f.p) || [], nt = rs.filter((ri) => routes[ri].m === 'TOOL').length; size = [nt ? plural(nt, 'MCP tool') : '', rs.length - nt ? plural(rs.length - nt, 'endpoint') : ''].filter(Boolean).join(' · '); }
   const rec = recentOf(item), inside = recentIn.get(item.startsWith('m:') ? 'f:' + item.slice(2) : item);
   const pill = rec ? `<span class="rw">${recentLabel(rec)}</span>` : inside ? `<span class="rw soft">${inside.length} changed</span>` : '';
   return size || pill ? `<div class="foot">${size ? `<span class="meta">${size}</span>` : '<span></span>'}${pill}</div>` : '';
@@ -858,7 +860,7 @@ function cardHTML(item) {
     desc = dsc(f.d, 2);
   } else if (i.type === 'route') {
     const r = i.r;
-    head = `<span class="method" style="--m:${methodVar(r.m)}">${h(r.m)}</span><span class="rpath">${h(r.p)}</span>`;
+    head = `<span class="method" style="--m:${methodVar(r.m)}"${r.m === 'TOOL' ? ' title="MCP tool: AI agents call it through the server\'s /mcp address"' : ''}>${h(r.m)}</span><span class="rpath">${h(r.p)}</span>`;
     title = `<div class="title">${h(r.name)}</div>`;
     desc = dsc(r.d, 2);
   } else if (i.type === 'symbol') {
@@ -883,7 +885,7 @@ function cardTip(id) {
   }
   const i = info(id);
   const st = statsOf(id);
-  const kind = i.type === 'node' ? i.kind : i.type === 'route' ? 'endpoint' : i.type === 'symbol' ? i.symKind : i.type === 'module' ? 'file' : i.type;
+  const kind = i.type === 'node' ? i.kind : i.type === 'route' ? endpointKind(i.r) : i.type === 'symbol' ? i.symKind : i.type === 'module' ? 'file' : i.type;
   const where = i.type === 'node' ? (i.n.paths || []).join('\n') : i.type === 'route' ? `${i.f.p}${i.r.h ? ` · ${i.r.h}()` : ''}` : i.path || '';
   const size = st?.files ? (i.type === 'file' || i.type === 'module' ? `${fmt(st.loc)} lines` : `${plural(st.files, 'file')} · ${fmt(st.loc)} lines`) : '';
   const hints = [drillable(id) && state.container !== id ? '<span><span class="kbd">2×click</span> open</span>' : '', '<span><span class="kbd">right-click</span> more</span>'].join('');
@@ -1333,7 +1335,7 @@ const routeRow = (ri, extra = '') => {
 const listSec = (title, rows, count, max = 30) => rows.length ? `<div class="sec"><h3>${h(title)} <span class="c">${count ?? rows.length}</span></h3><div class="list">${rows.slice(0, max).join('')}${rows.length > max ? `<div class="more">+${rows.length - max} more</div>` : ''}</div></div>` : '';
 const pathBox = (p) => `<div class="pp"><span>${h(p)}</span><button data-copy="${h(p)}" title="Copy">${iconI('copy')}</button></div>`;
 function header(i) {
-  const kind = i.type === 'node' ? i.kind : i.type === 'symbol' ? i.symKind : i.type === 'route' ? 'Endpoint' : i.type === 'module' ? 'file' : i.type;
+  const kind = i.type === 'node' ? i.kind : i.type === 'symbol' ? i.symKind : i.type === 'route' ? (i.r.m === 'TOOL' ? 'MCP tool' : 'Endpoint') : i.type === 'module' ? 'file' : i.type;
   return `<div class="ph"><span class="ico" style="--c:${colorOf(i)}">${icon(iconKey(i))}</span><span class="kindlabel">${h(kind)}</span></div>
     <h2 class="pt">${h(i.name)}</h2>${i.desc ? `<p class="pd">${h(i.desc)}</p>` : '<p class="pd empty">No description yet.</p>'}`;
 }
@@ -1449,7 +1451,7 @@ function itemPanel(item, viaConnector) {
     if (s?.files) {
       const langs = Object.entries(n?.stats.langs || {}).sort((a, b) => b[1] - a[1]).slice(0, 5);
       const tot = langs.reduce((a, [, v]) => a + v, 0) || 1;
-      const palette = ['#a78bfa', '#38bdf8', '#34d399', '#fbbf24', '#f472b6'];
+      const palette = ['var(--n-service)', 'var(--n-ui)', 'var(--n-library)', 'var(--n-worker)', 'var(--n-test)']; // theme colours, so light mode gets its own
       const nr = routes.filter((r) => chain('f:' + r.f).includes(item)).length;
       html += `<div class="sec"><div class="stats"><div><b>${fmt(s.files)}</b><span>files</span></div><div><b>${fmt(s.loc)}</b><span>lines</span></div><div><b>${nr}</b><span>endpoints</span></div></div>
         ${langs.length ? `<div class="bar">${langs.map(([, v], k) => `<span style="flex:${v};background:${palette[k]}"></span>`).join('')}</div><div class="legend-row">${langs.map(([l, v], k) => `<span><span class="dot" style="background:${palette[k]}"></span>${h(l)} ${Math.round((v / tot) * 100)}%</span>`).join('')}</div>` : ''}</div>`;
