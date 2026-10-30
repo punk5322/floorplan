@@ -5,6 +5,7 @@
 // usage: node describe.mjs [root]                  write worksheets + description skeletons, print an index
 //        node describe.mjs [root] --all            include entries that already have descriptions
 //        node describe.mjs [root] --max-files 40   files per worksheet before splitting into parts
+//        node describe.mjs [root] --out <dir>      the map folder, when it lives outside the codebase (as with build --out)
 //
 // Run build.mjs first: worksheets are generated from floorplan/graph.json.
 
@@ -15,7 +16,7 @@ import { fallbackFileName, fallbackRouteName, routeKey } from './lib/names.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args._[0] || '.');
-const outDir = mapDir(root);
+const outDir = args.out ? path.resolve(args.out) : mapDir(root); // --out: a map kept outside the codebase
 const graphFile = path.join(outDir, 'graph.json');
 if (!fs.existsSync(graphFile)) { console.error('✗ No floorplan/graph.json. Run build.mjs first.'); process.exit(1); }
 const g = JSON.parse(fs.readFileSync(graphFile, 'utf8'));
